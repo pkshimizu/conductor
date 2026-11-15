@@ -45,7 +45,12 @@ function fakeDeps(results: ExecResult[], start = "2026-11-15T03:00:00Z") {
   const calls: Call[] = [];
   const exec: Exec = (args, { cwd, input }) => {
     const file = args[args.indexOf("--append-system-prompt-file") + 1]!;
-    calls.push({ args, cwd, input, systemPrompt: readFileSync(file, "utf8") });
+    calls.push({
+      args,
+      cwd: cwd ?? "",
+      input: input ?? "",
+      systemPrompt: readFileSync(file, "utf8"),
+    });
     const r = results.shift();
     if (!r) throw new Error("呼び出しが多すぎる");
     return Promise.resolve(r);
