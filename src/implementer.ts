@@ -101,7 +101,9 @@ function bashRules(command: string): string[] {
 }
 
 export function implementerAllow(config: Config): string[] {
-  const commands = Object.values(config.commands);
+  const commands = Object.values(config.commands).filter(
+    (c): c is string => c !== undefined,
+  );
   return [
     "Read",
     "Glob",

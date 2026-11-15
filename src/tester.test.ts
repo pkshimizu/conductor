@@ -44,7 +44,12 @@ function makeConfig(extra: string[] = []) {
     [
       "github: { repo: me/app, project: 3, notify: me }",
       "protected: [e2e/**, supabase/seed.sql]",
-      "commands: { setup: npm run db:reset, test: a, acceptance: npm run e2e, typecheck: d, build: e }",
+      // extra に commands があれば、そちらを使う（YAML のキー重複を避ける）
+      ...(extra.some((l) => l.startsWith("commands:"))
+        ? []
+        : [
+            "commands: { setup: npm run db:reset, test: a, acceptance: npm run e2e, typecheck: d, build: e }",
+          ]),
       ...extra,
     ].join("\n"),
   );
@@ -121,13 +126,30 @@ function fakeBoard() {
 
 type Step = { output: TesterOutput; write?: Record<string, string> };
 
-function setup(steps: Step[], configExtra: string[] = []) {
+/** 整形の偽物。呼ばれたコマンドを記録し、中身を書き換える */
+type FakeFormat = (files: Map<string, string>) => number;
+
+function setup(
+  steps: Step[],
+  configExtra: string[] = [],
+  format: FakeFormat = () => 0,
+) {
   const config = makeConfig(configExtra);
   const g = fakeGit();
   const b = fakeBoard();
   const store = new MemoryStore(() => new Date("2026-11-15T00:00:00Z"));
   const runs: RoleRun<typeof testerOutputSchema>[] = [];
+  const shellCalls: string[] = [];
   const deps: TesterDeps = {
+    shell: (cmd) => {
+      shellCalls.push(cmd);
+      const code = format(g.files);
+      return Promise.resolve({
+        code,
+        stdout: "",
+        stderr: code ? "SyntaxError: x" : "",
+      });
+    },
     config,
     repoDir: "/repo",
     git: g.git,
@@ -148,7 +170,7 @@ function setup(steps: Step[], configExtra: string[] = []) {
       });
     },
   };
-  return { config, g, b, store, runs, deps };
+  return { config, g, b, store, runs, deps, shellCalls };
 }
 
 const approve = (tests: TesterOutput["tests"]): TesterOutput => ({
@@ -318,6 +340,53 @@ describe("runTester", () => {
     const r4 = await runTester(s.deps, ISSUE);
     expect(r4).toEqual({ status: "waiting" });
     expect(s.runs).toHaveLength(3);
+  });
+
+  it("commands.format が無ければ整形しない", async () => {
+    const s = setup([
+      { output: approve(TESTS), write: { "e2e/cards.spec.ts": SPEC } },
+    ]);
+    await runTester(s.deps, ISSUE);
+    expect(s.shellCalls).toEqual([]);
+  });
+
+  it("commands.format があれば整形してからコミットし、保護対象の外の変更は捨てる", async () => {
+    const s = setup(
+      [{ output: approve(TESTS), write: { "e2e/cards.spec.ts": SPEC } }],
+      [
+        "commands: { setup: s, test: a, acceptance: e, typecheck: d, build: b, format: npm run format }",
+      ],
+      (files) => {
+        files.set("e2e/cards.spec.ts", `${SPEC}\n// 整形済み`);
+        files.set("src/other.ts", "ついでに整形");
+        return 0;
+      },
+    );
+    const r = await runTester(s.deps, ISSUE);
+    expect(r.status).toBe("committed");
+    expect(s.shellCalls).toEqual(["npm run format"]);
+    expect(s.g.committed.get("e2e/cards.spec.ts")).toContain("// 整形済み");
+    expect([...s.g.committed.keys()]).toEqual(["e2e/cards.spec.ts"]);
+    expect(s.g.log).toContain("discard src/other.ts");
+  });
+
+  it("整形が失敗したら問題として書き直させる", async () => {
+    let n = 0;
+    const s = setup(
+      [
+        { output: approve(TESTS), write: { "e2e/cards.spec.ts": SPEC } },
+        { output: approve(TESTS), write: { "e2e/cards.spec.ts": SPEC } },
+      ],
+      [
+        "commands: { setup: s, test: a, acceptance: e, typecheck: d, build: b, format: npm run format }",
+      ],
+      () => (++n === 1 ? 2 : 0),
+    );
+    const r = await runTester(s.deps, ISSUE);
+    expect(r.status).toBe("committed");
+    expect(s.runs).toHaveLength(2);
+    expect(s.runs[1]!.prompt).toContain("整形（npm run format）が失敗しました");
+    expect(s.runs[1]!.prompt).toContain("SyntaxError: x");
   });
 
   it("Issue に無い AC のテストは問題にする", async () => {

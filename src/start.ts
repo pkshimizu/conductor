@@ -67,6 +67,7 @@ export async function buildLoopDeps(
           ...base,
           run,
           readFile: (path) => readFile(join(repoDir, path), "utf8"),
+          shell: shellExec,
           instructions: testerInstructions,
         },
         issue,

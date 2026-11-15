@@ -63,6 +63,11 @@ export const configSchema = z
         acceptance: text,
         typecheck: text,
         build: text,
+        /**
+         * 整形（例: npm run format）。書けばテスト役のコミット前に実行し、
+         * 受け入れテストを整形済みで保護する（実装役の整形で保護対象が変わらないように）
+         */
+        format: text.optional(),
       })
       .strict(),
     limits: z
