@@ -74,6 +74,8 @@ export const configSchema = z
       })
       .strict()
       .prefault({}),
+    /** 受け入れテストで各 AC の画面を撮影して保存するフォルダ。無ければ撮影しない */
+    screenshots: text.optional(),
     /** GitHub を確認する間隔（秒） */
     poll_interval: z.number().int().min(10).default(90),
     roles: z
