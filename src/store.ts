@@ -10,6 +10,8 @@ export const STAGES = [
   "implementing",
   "ci",
   "reviewing",
+  /** 人の承認待ち（merge.approval: human） */
+  "approving",
   "merging",
 ] as const;
 export type Stage = (typeof STAGES)[number];
@@ -27,6 +29,17 @@ export interface Checkpoint {
   reason?: string;
   /** この時刻まで待ってから再開する（ISO 8601） */
   resumeAt?: string;
+  /** 人の承認待ち（merge.approval: human）のときの情報 */
+  approval?: ApprovalWait;
+}
+
+export interface ApprovalWait {
+  /** 承認待ちになった時刻（ISO 8601）。これより後のコメントだけを見る */
+  since: string;
+  /** レビューした時点の PR の先頭コミット */
+  sha: string;
+  /** ここまでに書かれたコメントは確認済み（ISO 8601） */
+  checked: string;
 }
 
 export interface IssueRecord extends IssueKey {

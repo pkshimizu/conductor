@@ -58,9 +58,14 @@ function setup(
     diff?: string;
     extraConfig?: string[];
     existing?: string[];
+    /** 既存の試験はマージまでを見るので、既定は auto */
+    approval?: "human" | "auto";
   } = {},
 ) {
-  const config = makeConfig(options.extraConfig);
+  const config = makeConfig([
+    `merge: { approval: ${options.approval ?? "auto"} }`,
+    ...(options.extraConfig ?? []),
+  ]);
   const store = new MemoryStore(() => new Date("2026-11-15T00:00:00Z"));
   const log: string[] = [];
   const moves: [number, string][] = [];
@@ -109,6 +114,9 @@ function setup(
         return Promise.resolve();
       },
       baseBranch: () => Promise.resolve("main"),
+      headSha: () => Promise.resolve("abc"),
+      prComments: () => Promise.resolve([]),
+      canWrite: () => Promise.resolve(true),
     },
     shell: (cmd) => {
       commands.push(cmd);
@@ -292,6 +300,44 @@ describe("checkCi", () => {
 });
 
 describe("runReviewer", () => {
+  it("merge.approval が human なら、全員が承認してもマージせず承認待ちにする", async () => {
+    const s = setup([approve()], { approval: "human" });
+    await s.init();
+    const r = await runReviewer(s.deps, ISSUE);
+    expect(r).toEqual({ status: "awaiting-approval", pr: 7 });
+    expect(s.merged).toEqual([]);
+    // Reviewing 列のまま
+    expect(s.moves.at(-1)).toEqual([2, "Reviewing"]);
+    expect(s.comments.at(-1)).toMatchObject({ issue: 7, mention: true });
+    expect(s.comments.at(-1)!.body).toContain("/conductor approve");
+    const cp = (await s.store.get(KEY))?.checkpoint;
+    expect(cp?.stage).toBe("approving");
+    expect(cp?.approval?.sha).toBe("abc");
+  });
+
+  it("承認待ちなら、レビュー役を動かさずに /conductor approve を見てマージする", async () => {
+    const s = setup([], { approval: "human" });
+    await s.init();
+    const since = new Date(0).toISOString();
+    await s.store.update(KEY, {
+      checkpoint: {
+        stage: "approving",
+        approval: { since, checked: since, sha: "abc" },
+      },
+    });
+    s.deps.board.prComments = () =>
+      Promise.resolve([
+        {
+          author: "me",
+          body: "/conductor approve",
+          createdAt: new Date(1000).toISOString(),
+        },
+      ]);
+    const r = await runReviewer(s.deps, ISSUE);
+    expect(r).toEqual({ status: "merged", pr: 7 });
+    expect(s.merged).toHaveLength(1);
+  });
+
   it("観点ごとに並列でレビューし、全員が承認ならマージする", async () => {
     const s = setup([approve("a ok"), approve("b ok"), approve("c ok")], {
       perspectives: [

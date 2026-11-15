@@ -76,6 +76,17 @@ export const configSchema = z
       })
       .strict()
       .prefault({}),
+    merge: z
+      .object({
+        /**
+         * レビュー役が承認した後のマージのしかた。
+         * human: 人が PR に /conductor approve とコメントしてからマージする（既定）
+         * auto: 人の確認なしにすぐマージする
+         */
+        approval: z.enum(["human", "auto"]).default("human"),
+      })
+      .strict()
+      .prefault({}),
     /** 受け入れテストで各 AC の画面を撮影して保存するフォルダ。無ければ撮影しない */
     screenshots: text.optional(),
     /** GitHub を確認する間隔（秒） */
