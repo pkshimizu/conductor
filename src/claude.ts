@@ -101,6 +101,21 @@ export class RoleError extends Error {
   }
 }
 
+/**
+ * Bash(...) の規則に、同じ中身の PowerShell(...) の規則を足す。
+ * Windows の Claude Code はコマンドを PowerShell 道具で動かすため、
+ * Bash(...) だけでは一致せず拒否される。
+ */
+export function withShellVariants(rules: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const r of rules) {
+    out.push(r);
+    const m = /^Bash\((.*)\)$/s.exec(r);
+    if (m) out.push(`PowerShell(${m[1]})`);
+  }
+  return [...new Set(out)];
+}
+
 /** claude -p の引数を組み立てる */
 export function buildArgs(
   run: Pick<RoleRun<z.ZodType>, "schema" | "allow" | "deny" | "model">,
@@ -121,10 +136,10 @@ export function buildArgs(
   if (run.model) args.push("--model", run.model);
   // 許可リストが空なら道具を一切使わせない
   if (run.allow.length === 0) args.push("--tools", "");
-  else args.push("--allowedTools", ...run.allow);
+  else args.push("--allowedTools", ...withShellVariants(run.allow));
   // 許可リストより優先して拒否する操作（保護対象の書き換えなど）
   if (run.deny && run.deny.length > 0) {
-    args.push("--disallowedTools", ...run.deny);
+    args.push("--disallowedTools", ...withShellVariants(run.deny));
   }
   return args;
 }
