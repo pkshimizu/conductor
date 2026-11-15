@@ -243,9 +243,20 @@ export class GitHub {
       ["run", "view", "--job", job, "--log-failed", "-R", this.repo],
       {},
     );
-    if (res.code !== 0)
+    if (res.code === 0) return tailLog(res.stdout, LOG_TAIL_LINES);
+    // 他のジョブが動いている間は --log-failed が使えない。
+    // 終わったジョブのログは API で取れるので、そちらで代わりに取る
+    const api = await this.exec(
+      [
+        "api",
+        "--allow-escape-sequences",
+        `repos/${this.repo}/actions/jobs/${job}/logs`,
+      ],
+      {},
+    );
+    if (api.code !== 0)
       return `（ログを取れませんでした: ${res.stderr.trim()}）`;
-    return tailLog(res.stdout, LOG_TAIL_LINES);
+    return tailLog(untilLastError(api.stdout), LOG_TAIL_LINES);
   }
 
   // ---- AC5: マージ ----
@@ -469,6 +480,19 @@ export function tailLog(log: string, lines: number): string {
     })
     .filter((l) => l.trim() !== "");
   return cleaned.slice(-lines).join("\n");
+}
+
+/**
+ * ジョブ全体のログから、最後の ##[error] 行までを残す。
+ * その後ろは後片付けの手順（checkout の Post など）で、失敗の手掛かりにならない
+ */
+export function untilLastError(log: string): string {
+  const lines = log.split(/\r?\n/);
+  let last = -1;
+  lines.forEach((l, i) => {
+    if (l.includes("##[error]")) last = i;
+  });
+  return last < 0 ? log : lines.slice(0, last + 1).join("\n");
 }
 
 /** 設定（.conductor/config.yaml の github）から作る */

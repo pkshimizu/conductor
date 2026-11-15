@@ -6,6 +6,7 @@ import {
   githubFromConfig,
   summarizeChecks,
   tailLog,
+  untilLastError,
 } from "./github.js";
 
 type Handler = (args: string[], input: string) => ExecResult | undefined;
@@ -301,6 +302,47 @@ describe("AC4: CI", () => {
       "-R",
       "me/app",
     ]);
+  });
+
+  it("run が実行中で --log-failed が使えなければ、API でジョブのログを取る", async () => {
+    const { gh, calls } = fakeGh((args) => {
+      if (args[0] === "pr")
+        return {
+          code: 1,
+          stdout: JSON.stringify(checks("pass", "fail")),
+          stderr: "",
+        };
+      if (args[0] === "run")
+        return {
+          code: 1,
+          stdout: "",
+          stderr:
+            "run 1 is still in progress; logs will be available when it is complete",
+        };
+      if (args[0] === "api")
+        return {
+          code: 0,
+          stdout:
+            "2026-11-15T01:02:03.0000000Z Error: env が無い\n" +
+            "2026-11-15T01:02:03.1000000Z ##[error]Process completed with exit code 1.\n" +
+            "2026-11-15T01:02:04.0000000Z Post job cleanup.\n",
+          stderr: "",
+        };
+      return undefined;
+    });
+    const r = await gh.ciStatus(12);
+    expect(r.failureLog).toBe(
+      "## c1\nError: env が無い\n##[error]Process completed with exit code 1.",
+    );
+    expect(calls[2]!.args).toEqual([
+      "api",
+      "--allow-escape-sequences",
+      "repos/me/app/actions/jobs/101/logs",
+    ]);
+  });
+
+  it("##[error] が無ければログをそのまま残す", () => {
+    expect(untilLastError("a\nb")).toBe("a\nb");
   });
 
   it("ログは末尾だけ残す", () => {
