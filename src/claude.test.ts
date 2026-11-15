@@ -176,6 +176,30 @@ describe("AC3: 許可リスト", () => {
     expect(args.slice(j + 1, j + 3)).toEqual(["Read", "Bash(npm test)"]);
   });
 
+  it("Bash の規則には PowerShell の規則も足す（Windows 用）", () => {
+    const args = buildArgs(
+      {
+        schema: commonOutputSchema,
+        allow: ["Read", "Bash(npm test)", "Bash(npm test *)"],
+        deny: ["Bash(git push *)"],
+      },
+      "f.md",
+    );
+    const j = args.indexOf("--allowedTools");
+    expect(args.slice(j + 1, j + 6)).toEqual([
+      "Read",
+      "Bash(npm test)",
+      "PowerShell(npm test)",
+      "Bash(npm test *)",
+      "PowerShell(npm test *)",
+    ]);
+    const i = args.indexOf("--disallowedTools");
+    expect(args.slice(i + 1)).toEqual([
+      "Bash(git push *)",
+      "PowerShell(git push *)",
+    ]);
+  });
+
   it("許可リストが空なら道具を使わせない", () => {
     const args = buildArgs({ schema: commonOutputSchema, allow: [] }, "f.md");
     expect(args[args.indexOf("--tools") + 1]).toBe("");

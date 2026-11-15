@@ -166,6 +166,7 @@ describe("許可・禁止と依頼文", () => {
     const config = makeConfig();
     const allow = implementerAllow(config);
     expect(allow).toContain("Edit");
+    expect(allow).toContain("Write");
     expect(allow).toContain("Bash(npm run e2e)");
     expect(allow).toContain("Bash(npm test *)");
     expect(implementerDeny(config)).toEqual([

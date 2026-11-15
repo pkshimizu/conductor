@@ -107,6 +107,8 @@ export function implementerAllow(config: Config): string[] {
     "Glob",
     "Grep",
     "Edit",
+    // 新しいファイルを作るため。保護対象は implementerDeny の Edit(...) で Write も止まる
+    "Write",
     ...[...new Set(commands)].flatMap(bashRules),
     ...config.roles.implementer.allow,
   ];
