@@ -62,6 +62,8 @@ export interface RoleRun<S extends z.ZodType> {
   schema: S;
   /** 許可する操作（例: "Read", "Bash(npm test)"） */
   allow: readonly string[];
+  /** 禁止する操作。allow より優先される（例: "Edit(./e2e/**)"） */
+  deny?: readonly string[];
   model?: string;
   /** 1回の実行の制限時間（ミリ秒） */
   timeoutMs?: number;
@@ -101,7 +103,7 @@ export class RoleError extends Error {
 
 /** claude -p の引数を組み立てる */
 export function buildArgs(
-  run: Pick<RoleRun<z.ZodType>, "schema" | "allow" | "model">,
+  run: Pick<RoleRun<z.ZodType>, "schema" | "allow" | "deny" | "model">,
   systemPromptFile: string,
 ): string[] {
   const args = [
@@ -120,6 +122,10 @@ export function buildArgs(
   // 許可リストが空なら道具を一切使わせない
   if (run.allow.length === 0) args.push("--tools", "");
   else args.push("--allowedTools", ...run.allow);
+  // 許可リストより優先して拒否する操作（保護対象の書き換えなど）
+  if (run.deny && run.deny.length > 0) {
+    args.push("--disallowedTools", ...run.deny);
+  }
   return args;
 }
 
