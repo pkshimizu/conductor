@@ -17,7 +17,7 @@ export const HELP = `使い方: conductor <コマンド> [オプション]
 
 コマンド:
   check [フォルダ]  対象リポジトリの .conductor/config.yaml を点検する（既定は今のフォルダ）
-  start            常駐して Ready の Issue を進める（未実装）
+  start [フォルダ]  常駐して Ready の Issue を進める（Ctrl+C で、今の段階を終えてから止まる）
 
 オプション:
   -h, --help     この説明を表示する
@@ -66,13 +66,30 @@ export async function main(
     case "check":
       return check(resolve(rest[0] ?? "."), output);
     case "start":
-      output.err("start はまだ実装されていません");
-      return 1;
+      return startCommand(resolve(rest[0] ?? "."), output);
     default:
       output.err(`不明なコマンド: ${command}`);
       output.err(HELP);
       return 2;
   }
+}
+
+async function startCommand(repoDir: string, output: Output): Promise<number> {
+  let config;
+  try {
+    config = await loadConfig(repoDir);
+  } catch (e) {
+    if (e instanceof ConfigError) {
+      output.err(e.message);
+      return 1;
+    }
+    throw e;
+  }
+  const { start } = await import("./start.js");
+  await start(repoDir, config, (text) =>
+    output.out(`[${new Date().toLocaleTimeString("ja-JP")}] ${text}`),
+  );
+  return 0;
 }
 
 async function check(repoDir: string, output: Output): Promise<number> {

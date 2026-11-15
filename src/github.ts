@@ -276,6 +276,15 @@ export class GitHub {
     return res.head.sha;
   }
 
+  /** PR がベースブランチと衝突しているか。GitHub が計算中（null）のときは衝突なしとみなす */
+  async hasConflict(pr: number): Promise<boolean> {
+    const res = await this.rest<{ mergeable: boolean | null }>(
+      "GET",
+      `repos/${this.repo}/pulls/${pr}`,
+    );
+    return res.mergeable === false;
+  }
+
   /** PR の会話・行へのコメント・レビュー本文をまとめて返す（新しい100件まで） */
   async prComments(pr: number): Promise<PrComment[]> {
     type Raw = {
