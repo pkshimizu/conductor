@@ -142,6 +142,7 @@ export function testerPrompt(
         (ac) =>
           `- ${ac}: ${screenshotPath(config.screenshots!, issue.number, ac)}`,
       ),
+      "保存先のパスは変数や関数で組み立てず、各テストの中に上の文字列のまま書いてください（conductor は文字列で撮影の有無を確かめます）。",
     );
   }
   if (feedback.length > 0) {
@@ -192,7 +193,9 @@ export async function verifyTests(
     if (config.screenshots) {
       const shot = `${t.ac}.png`;
       if (!text.includes(shot)) {
-        problems.push(`${t.file} に ${t.ac} の撮影（${shot}）がありません`);
+        problems.push(
+          `${t.file} に ${t.ac} の撮影（${shot}）がありません（パスを文字列のまま書いてください）`,
+        );
       }
     }
   }
