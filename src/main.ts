@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { ConfigError, loadConfig } from "./config.js";
 
 export interface Output {
   out: (text: string) => void;
@@ -14,7 +16,8 @@ const consoleOutput: Output = {
 export const HELP = `使い方: conductor <コマンド> [オプション]
 
 コマンド:
-  start        常駐して Ready の Issue を進める（未実装）
+  check [フォルダ]  対象リポジトリの .conductor/config.yaml を点検する（既定は今のフォルダ）
+  start            常駐して Ready の Issue を進める（未実装）
 
 オプション:
   -h, --help     この説明を表示する
@@ -53,13 +56,15 @@ export async function main(
     output.out(version());
     return 0;
   }
-  const [command] = positionals;
+  const [command, ...rest] = positionals;
   if (values.help || command === undefined) {
     output.out(HELP);
     return 0;
   }
 
   switch (command) {
+    case "check":
+      return check(resolve(rest[0] ?? "."), output);
     case "start":
       output.err("start はまだ実装されていません");
       return 1;
@@ -67,5 +72,19 @@ export async function main(
       output.err(`不明なコマンド: ${command}`);
       output.err(HELP);
       return 2;
+  }
+}
+
+async function check(repoDir: string, output: Output): Promise<number> {
+  try {
+    const config = await loadConfig(repoDir);
+    output.out(`設定は正しく読めました: ${config.github.repo}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof ConfigError) {
+      output.err(e.message);
+      return 1;
+    }
+    throw e;
   }
 }
