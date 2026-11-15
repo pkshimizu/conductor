@@ -188,6 +188,7 @@ describe("testerAllow / testerPrompt", () => {
     expect(p).toContain("AC1、AC2");
     expect(p).toContain("- e2e/**");
     expect(p).toContain("shots/issue-2/AC2.png");
+    expect(p).toContain("文字列のまま");
     expect(p).toContain("- AC2 のテストがありません");
     expect(p).toContain("npm run e2e");
   });
@@ -263,7 +264,7 @@ describe("runTester", () => {
     expect(r.status).toBe("failed");
     if (r.status !== "failed") return;
     expect(r.problems).toContain(
-      "e2e/cards.spec.ts に AC1 の撮影（AC1.png）がありません",
+      "e2e/cards.spec.ts に AC1 の撮影（AC1.png）がありません（パスを文字列のまま書いてください）",
     );
     expect(s.b.moves).toEqual([[2, "Blocked"]]);
     expect(s.b.comments[0]).toMatchObject({ issue: 2, mention: true });
