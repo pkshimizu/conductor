@@ -127,6 +127,17 @@ export class Git {
     return (await this.run(["rev-parse", "HEAD"])).trim();
   }
 
+  /** origin の base から HEAD までの差分（stat なら変更の一覧） */
+  async diffFrom(base: string, options: { stat?: boolean } = {}) {
+    await this.run(["fetch", "-q", "origin", base]);
+    return this.run([
+      "diff",
+      "--no-color",
+      ...(options.stat ? ["--stat"] : []),
+      `origin/${base}...HEAD`,
+    ]);
+  }
+
   async push(branch: string): Promise<void> {
     await this.run([
       "push",

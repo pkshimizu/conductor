@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ConfigError,
   loadConfig,
+  formatRoleDocs,
+  loadRoleDocs,
   loadRoleInstructions,
   parseConfig,
 } from "./config.js";
@@ -84,7 +86,11 @@ describe("parseConfig", () => {
     expect(c.protected).toEqual(["e2e/acceptance/**", "supabase/seed.sql"]);
     expect(c.commands.setup).toBe("npx supabase db reset");
     expect(c.commands.acceptance).toBe("npx playwright test e2e/acceptance");
-    expect(c.limits).toEqual({ rejections: 5, objections: 1 });
+    expect(c.limits).toEqual({
+      rejections: 5,
+      objections: 1,
+      reviewers: 3,
+    });
     expect(c.poll_interval).toBe(60);
     expect(c.roles.tester.allow).toEqual(["Bash(npx playwright test *)"]);
     expect(c.roles.implementer.allow).toEqual([]);
@@ -130,7 +136,11 @@ describe("parseConfig", () => {
 
   it("AC3: 上限回数と確認間隔を省略すると既定値になる", () => {
     const c = parseConfig(MINIMAL);
-    expect(c.limits).toEqual({ rejections: 3, objections: 2 });
+    expect(c.limits).toEqual({
+      rejections: 3,
+      objections: 2,
+      reviewers: 3,
+    });
     expect(c.poll_interval).toBe(90);
     expect(c.github.columns).toEqual({
       ready: "Ready",
@@ -147,7 +157,7 @@ describe("ファイルからの読み込み", () => {
   let dir: string;
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "conductor-config-"));
-    await mkdir(join(dir, ".conductor", "roles"), { recursive: true });
+    await mkdir(join(dir, ".conductor"), { recursive: true });
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -162,17 +172,46 @@ describe("ファイルからの読み込み", () => {
     await expect(loadConfig(dir)).rejects.toThrow(/ファイルがありません/);
   });
 
-  it("AC4: roles/<役>.md の中身が追加の指示になる", async () => {
-    await writeFile(
-      join(dir, ".conductor", "roles", "tester.md"),
-      "\n# テスト役\n\n画面の文言で部品を探す。\n",
-    );
+  it("<役>/ の .md をファイル名の順に読む（空・.md 以外は除く）", async () => {
+    const d = join(dir, ".conductor", "reviewer");
+    await mkdir(d, { recursive: true });
+    await writeFile(join(d, "b-security.md"), "\n秘密を書かない。\n");
+    await writeFile(join(d, "a-a11y.md"), "ラベルがある。");
+    await writeFile(join(d, "empty.md"), "  \n");
+    await writeFile(join(d, "memo.txt"), "読まない");
+    expect(await loadRoleDocs(dir, "reviewer")).toEqual([
+      { name: "a-a11y", text: "ラベルがある。" },
+      { name: "b-security", text: "秘密を書かない。" },
+    ]);
+  });
+
+  it("<役>/ の定義が見出し付きの追加の指示になる", async () => {
+    const d = join(dir, ".conductor", "tester");
+    await mkdir(d, { recursive: true });
+    await writeFile(join(d, "locator.md"), "画面の文言で部品を探す。");
+    await writeFile(join(d, "edge.md"), "0件と1件を確かめる。");
     expect(await loadRoleInstructions(dir, "tester")).toBe(
-      "# テスト役\n\n画面の文言で部品を探す。",
+      [
+        "# テスト観点",
+        "",
+        "このリポジトリで守ること・確かめることです。必ず従ってください。",
+        "",
+        "## edge",
+        "",
+        "0件と1件を確かめる。",
+        "",
+        "## locator",
+        "",
+        "画面の文言で部品を探す。",
+      ].join("\n"),
+    );
+    expect(formatRoleDocs("implementer", [{ name: "x", text: "y" }])).toMatch(
+      /^# 実装ルール/,
     );
   });
 
-  it("AC4: ファイルが無い役は追加の指示なし", async () => {
+  it("フォルダが無い役は定義なし", async () => {
+    expect(await loadRoleDocs(dir, "reviewer")).toEqual([]);
     expect(await loadRoleInstructions(dir, "reviewer")).toBe("");
   });
 });

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml, YAMLParseError } from "yaml";
 import { z } from "zod";
@@ -71,6 +71,8 @@ export const configSchema = z
         rejections: z.number().int().positive().default(3),
         /** 異議の上限 */
         objections: z.number().int().positive().default(2),
+        /** レビュー観点ごとのレビュー役を、同時にいくつまで動かすか */
+        reviewers: z.number().int().positive().default(3),
       })
       .strict()
       .prefault({}),
@@ -158,19 +160,63 @@ export async function loadConfig(repoDir: string): Promise<Config> {
   return parseConfig(source, file);
 }
 
+/** 役ごとの定義ファイル（.conductor/<役>/*.md）の1つ */
+export interface RoleDoc {
+  /** 拡張子を除いたファイル名（例: "accessibility"） */
+  name: string;
+  text: string;
+}
+
+/** 役ごとの定義ファイルが何を書くものか（依頼に付ける見出し） */
+export const ROLE_DOC_HEADINGS: Record<Role, string> = {
+  tester: "テスト観点",
+  implementer: "実装ルール",
+  reviewer: "レビュー観点",
+};
+
 /**
- * .conductor/roles/<役>.md の中身を、役への追加の指示として返す。
+ * .conductor/<役>/ にある .md を、ファイル名の順に読む。
+ * - tester: テスト観点、implementer: 実装ルール、reviewer: レビュー観点
+ * - フォルダが無ければ空。中身が空のファイルは除く
+ */
+export async function loadRoleDocs(
+  repoDir: string,
+  role: Role,
+): Promise<RoleDoc[]> {
+  const dir = join(repoDir, CONDUCTOR_DIR, role);
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  const docs: RoleDoc[] = [];
+  for (const file of names.filter((n) => n.endsWith(".md")).sort()) {
+    const text = (await readFile(join(dir, file), "utf8")).trim();
+    if (text) docs.push({ name: file.slice(0, -".md".length), text });
+  }
+  return docs;
+}
+
+/** 定義ファイルを、役への追加の指示として1つの文にまとめる */
+export function formatRoleDocs(role: Role, docs: readonly RoleDoc[]): string {
+  if (docs.length === 0) return "";
+  return [
+    `# ${ROLE_DOC_HEADINGS[role]}`,
+    "",
+    "このリポジトリで守ること・確かめることです。必ず従ってください。",
+    ...docs.flatMap((d) => ["", `## ${d.name}`, "", d.text]),
+  ].join("\n");
+}
+
+/**
+ * .conductor/<役>/*.md をまとめて、役への追加の指示として返す。
  * ファイルが無ければ空文字（追加の指示なし）。
  */
 export async function loadRoleInstructions(
   repoDir: string,
   role: Role,
 ): Promise<string> {
-  const file = join(repoDir, CONDUCTOR_DIR, "roles", `${role}.md`);
-  try {
-    return (await readFile(file, "utf8")).trim();
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return "";
-    throw e;
-  }
+  return formatRoleDocs(role, await loadRoleDocs(repoDir, role));
 }
