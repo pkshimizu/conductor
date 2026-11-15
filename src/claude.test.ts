@@ -182,6 +182,18 @@ describe("AC3: 許可リスト", () => {
     expect(args).not.toContain("--allowedTools");
   });
 
+  it("禁止の操作は --disallowedTools で渡す", () => {
+    const args = buildArgs(
+      { schema: commonOutputSchema, allow: ["Edit"], deny: ["Edit(./e2e/**)"] },
+      "f.md",
+    );
+    const i = args.indexOf("--disallowedTools");
+    expect(args.slice(i + 1)).toEqual(["Edit(./e2e/**)"]);
+    expect(
+      buildArgs({ schema: commonOutputSchema, allow: ["Read"] }, "f.md"),
+    ).not.toContain("--disallowedTools");
+  });
+
   it("拒否された操作を結果に含める", async () => {
     const { deps } = fakeDeps([
       {
