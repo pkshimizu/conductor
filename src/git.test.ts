@@ -104,6 +104,34 @@ describe("Git（本物の git）", () => {
     expect(await git.treeHash("HEAD", globs)).toBe(changed);
   });
 
+  it("diffFrom は origin の base から分かれた後の変更だけを出す", async () => {
+    const remote = await mkdtemp(join(tmpdir(), "conductor-remote-"));
+    try {
+      execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+      sh("remote", "add", "origin", remote);
+      sh("push", "-q", "origin", "main");
+      sh("switch", "-q", "-c", "feature");
+      await put("src/app.ts", "feature\n");
+      await git.commit(["src/app.ts"], "feat");
+      // base 側が後から進んでも、その変更は差分に入らない（三点差分）
+      sh("switch", "-q", "main");
+      await put("README.md", "readme\n");
+      await git.commit(["README.md"], "docs");
+      sh("push", "-q", "origin", "main");
+      sh("switch", "-q", "feature");
+
+      const diff = await git.diffFrom("main");
+      expect(diff).toContain("+feature");
+      expect(diff).toContain("-app");
+      expect(diff).not.toContain("README.md");
+      const stat = await git.diffFrom("main", { stat: true });
+      expect(stat).toContain("src/app.ts");
+      expect(stat).toContain("1 file changed");
+    } finally {
+      await rm(remote, { recursive: true, force: true });
+    }
+  });
+
   it("失敗したら GitError を投げる", async () => {
     await expect(git.run(["rev-parse", "no-such-ref"])).rejects.toThrow(
       /git rev-parse no-such-ref が失敗しました/,

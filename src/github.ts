@@ -178,7 +178,7 @@ export class GitHub {
     body: string;
     base?: string;
   }): Promise<PullRequest> {
-    const base = input.base ?? (await this.getDefaultBranch());
+    const base = input.base ?? (await this.baseBranch());
     const pr = await this.rest<{ number: number; html_url: string }>(
       "POST",
       `repos/${this.repo}/pulls`,
@@ -315,7 +315,8 @@ export class GitHub {
     return added.addProjectV2ItemById.item.id;
   }
 
-  private async getDefaultBranch(): Promise<string> {
+  /** 既定のブランチ（PR のマージ先） */
+  async baseBranch(): Promise<string> {
     if (!this.defaultBranch) {
       const repo = await this.rest<{ default_branch: string }>(
         "GET",
