@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import { CONDUCTOR_DIR, type Config } from "./config.js";
+import type { Shell } from "./exec.js";
 import type { Git } from "./git.js";
 import { matchesAny } from "./git.js";
 import { listAcceptance } from "./intake.js";
@@ -75,6 +76,8 @@ export interface TesterDeps {
   ) => Promise<RoleResult<TesterOutput>>;
   /** リポジトリからの相対パスでファイルを読む */
   readFile: (path: string) => Promise<string>;
+  /** commands.format の実行に使う */
+  shell: Shell;
   /** .conductor/roles/tester.md の中身 */
   instructions: string;
   model?: string;
@@ -226,6 +229,35 @@ export function failedComment(problems: string[], ready: string): string {
   ].join("\n");
 }
 
+/** 整形の待ち時間の上限 */
+const FORMAT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * commands.format があれば実行する。保護対象の外に出た変更は捨てる。
+ * 失敗したら、テスト役への指摘を返す
+ */
+export async function formatWritten(
+  deps: Pick<TesterDeps, "config" | "repoDir" | "git" | "shell">,
+): Promise<string | undefined> {
+  const cmd = deps.config.commands.format;
+  if (!cmd) return undefined;
+  const res = await deps.shell(cmd, {
+    cwd: deps.repoDir,
+    timeoutMs: FORMAT_TIMEOUT_MS,
+  });
+  const changed = await deps.git.changedFiles();
+  await deps.git.discard(
+    changed.filter((f) => !matchesAny(f, deps.config.protected)),
+  );
+  if (res.code === 0) return undefined;
+  const tail = `${res.stdout}\n${res.stderr}`
+    .split(/\r?\n/)
+    .filter((l) => l.trim() !== "")
+    .slice(-20)
+    .join("\n");
+  return `整形（${cmd}）が失敗しました（終了コード ${String(res.code)}）。構文の誤りがないか確かめてください:\n${tail}`;
+}
+
 /** テスト役を1回分進める。失敗時の書き直しは1回まで */
 export async function runTester(
   deps: TesterDeps,
@@ -290,6 +322,12 @@ export async function runTester(
       return { status: "objection", questions, objections };
     }
 
+    // 整形してから保護する。実装役が後で整形しても、保護対象が変わらないように
+    const formatProblem =
+      out.verdict === "approve" && written.length > 0
+        ? await formatWritten(deps)
+        : undefined;
+
     const problems =
       out.verdict === "approve"
         ? await verifyTests(
@@ -303,6 +341,7 @@ export async function runTester(
         : [`テスト役が ${out.verdict} を返しました: ${out.summary}`];
     if (written.length === 0)
       problems.push("保護対象のファイルが1つも書かれていません");
+    if (formatProblem) problems.push(formatProblem);
 
     if (problems.length === 0) {
       const commit = await git.commit(
