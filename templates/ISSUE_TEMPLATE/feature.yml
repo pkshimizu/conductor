@@ -1,0 +1,38 @@
+# conductor に作ってもらう Issue のフォーム。対象リポジトリの .github/ISSUE_TEMPLATE/ に置く。
+# label は conductor の入口確認（src/intake.ts の REQUIRED_SECTIONS）と同じにすること。
+name: 機能
+description: conductor に作ってもらう機能。受け入れ条件は Given/When/Then で書く
+body:
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 目的
+      description: なぜこの機能が必要か
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 受け入れ条件（AC）
+      description: 1件ずつ Given（前提）/ When（操作）/ Then（結果）で書く。テスト役がこれを受け入れテストにする
+      value: |
+        - AC1
+          - Given
+          - When
+          - Then
+    validations:
+      required: true
+  - type: textarea
+    id: screen
+    attributes:
+      label: 画面の URL・文言
+      description: 対象の画面の URL（例：/cards/new）と、ボタンや見出しなど画面に出す文言。テストはこの文言で要素を探す。画面がなければ、コマンドや出力の文言を書く
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: 対象外
+      description: この Issue ではやらないこと
+    validations:
+      required: true
