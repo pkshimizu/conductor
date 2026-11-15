@@ -6,11 +6,13 @@
  * - --permission-mode dontAsk ＋ 許可リスト：リストにない操作は確認なしで拒否される
  * - 利用上限に達したら、リセット時刻まで待って同じ依頼をやり直す
  */
-import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { commandExec, type Exec } from "./exec.js";
+
+export type { Exec, ExecResult } from "./exec.js";
 
 /** 判定：承認／差し戻し／異議 */
 export const VERDICTS = ["approve", "reject", "objection"] as const;
@@ -73,17 +75,6 @@ export interface RoleResult<T> {
   turns: number;
   sessionId: string;
 }
-
-export interface ExecResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-}
-
-export type Exec = (
-  args: string[],
-  options: { cwd: string; input: string; timeoutMs?: number },
-) => Promise<ExecResult>;
 
 export interface ClaudeDeps {
   exec: Exec;
@@ -319,28 +310,7 @@ function parseCliResult(stdout: string) {
 
 /** 本物の claude を子プロセスで起動する */
 export function claudeExec(command = "claude"): Exec {
-  return (args, { cwd, input, timeoutMs }) =>
-    new Promise((resolve, reject) => {
-      const child = spawn(command, args, {
-        cwd,
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-        ...(timeoutMs !== undefined && { timeout: timeoutMs }),
-      });
-      const out: Buffer[] = [];
-      const err: Buffer[] = [];
-      child.stdout.on("data", (b: Buffer) => out.push(b));
-      child.stderr.on("data", (b: Buffer) => err.push(b));
-      child.on("error", reject);
-      child.on("close", (code) =>
-        resolve({
-          code,
-          stdout: Buffer.concat(out).toString("utf8"),
-          stderr: Buffer.concat(err).toString("utf8"),
-        }),
-      );
-      child.stdin.end(input, "utf8");
-    });
+  return commandExec(command);
 }
 
 export const realDeps = (onLimit?: ClaudeDeps["onLimit"]): ClaudeDeps => ({
