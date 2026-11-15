@@ -26,14 +26,15 @@ export function commandExec(command: string): Exec {
     new Promise((resolve, reject) => {
       const child = spawn(command, args, {
         ...(cwd !== undefined && { cwd }),
-        stdio: ["pipe", "pipe", "pipe"],
+        // 入力が無ければ標準入力は閉じておく（すぐ終わるコマンドへの書き込みで EPIPE になるため）
+        stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         windowsHide: true,
         ...(timeoutMs !== undefined && { timeout: timeoutMs }),
       });
       const out: Buffer[] = [];
       const err: Buffer[] = [];
-      child.stdout.on("data", (b: Buffer) => out.push(b));
-      child.stderr.on("data", (b: Buffer) => err.push(b));
+      child.stdout?.on("data", (b: Buffer) => out.push(b));
+      child.stderr?.on("data", (b: Buffer) => err.push(b));
       child.on("error", reject);
       child.on("close", (code) =>
         resolve({
@@ -42,6 +43,10 @@ export function commandExec(command: string): Exec {
           stderr: Buffer.concat(err).toString("utf8"),
         }),
       );
-      child.stdin.end(input ?? "", "utf8");
+      if (input !== undefined && child.stdin) {
+        // 読まずに終わる子プロセスでも落ちないよう、書き込みの失敗は無視する
+        child.stdin.on("error", () => {});
+        child.stdin.end(input, "utf8");
+      }
     });
 }

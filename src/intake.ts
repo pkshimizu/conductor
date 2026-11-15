@@ -77,6 +77,17 @@ function checkAcceptance(text: string): string[] {
   return problems;
 }
 
+/** 受け入れ条件の AC 番号（例: ["AC1", "AC2"]）を書かれた順に返す */
+export function listAcceptance(body: string): string[] {
+  const text = parseSections(body).get(AC_SECTION) ?? "";
+  const ids: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = /^\s*[-*]\s*(AC\d+)\b/.exec(line);
+    if (m && !ids.includes(m[1]!)) ids.push(m[1]!);
+  }
+  return ids;
+}
+
 /** 書き漏れの一覧を返す。空ならそろっている */
 export function checkIssueBody(body: string): string[] {
   const sections = parseSections(body);
