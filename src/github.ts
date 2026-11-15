@@ -3,6 +3,7 @@
  * - 段階は GitHub Projects の状態欄（Status）の列で表す
  * - 人とのやり取りは Issue のコメント（必要ならメンション付き）
  */
+import type { PrComment } from "./approval.js";
 import type { Config } from "./config.js";
 import { commandExec, type Exec } from "./exec.js";
 
@@ -262,6 +263,61 @@ export class GitHub {
       );
     }
     await this.moveIssue(issue, doneColumn);
+  }
+
+  // ---- マージの承認（approval.ts） ----
+
+  /** PR の先頭コミット */
+  async headSha(pr: number): Promise<string> {
+    const res = await this.rest<{ head: { sha: string } }>(
+      "GET",
+      `repos/${this.repo}/pulls/${pr}`,
+    );
+    return res.head.sha;
+  }
+
+  /** PR の会話・行へのコメント・レビュー本文をまとめて返す（新しい100件まで） */
+  async prComments(pr: number): Promise<PrComment[]> {
+    type Raw = {
+      user: { login: string } | null;
+      body: string | null;
+      created_at?: string;
+      submitted_at?: string;
+      path?: string;
+      line?: number | null;
+    };
+    const base = `repos/${this.repo}`;
+    const [issue, lines, reviews] = await Promise.all([
+      this.rest<Raw[]>("GET", `${base}/issues/${pr}/comments?per_page=100`),
+      this.rest<Raw[]>("GET", `${base}/pulls/${pr}/comments?per_page=100`),
+      this.rest<Raw[]>("GET", `${base}/pulls/${pr}/reviews?per_page=100`),
+    ]);
+    const out: PrComment[] = [];
+    for (const c of [...issue, ...lines, ...reviews]) {
+      const createdAt = c.created_at ?? c.submitted_at;
+      if (!c.user || !c.body?.trim() || !createdAt) continue;
+      out.push({
+        author: c.user.login,
+        body: c.body,
+        createdAt,
+        ...(c.path !== undefined && { path: c.path, line: c.line ?? null }),
+      });
+    }
+    return out;
+  }
+
+  /** リポジトリに書き込み権限があるか（共同作業者でなければ false） */
+  async canWrite(user: string): Promise<boolean> {
+    try {
+      const res = await this.rest<{ permission: string }>(
+        "GET",
+        `repos/${this.repo}/collaborators/${encodeURIComponent(user)}/permission`,
+      );
+      return res.permission === "admin" || res.permission === "write";
+    } catch (e) {
+      if (e instanceof GitHubError) return false;
+      throw e;
+    }
   }
 
   // ---- 下回り ----

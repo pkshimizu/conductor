@@ -376,3 +376,71 @@ describe("設定から作る", () => {
     expect(JSON.parse(calls[0]!)).toEqual({ body: "@me x" });
   });
 });
+
+describe("マージの承認に使う API", () => {
+  it("PR の先頭コミットを取る", async () => {
+    const { gh, calls } = fakeGh(() => ok({ head: { sha: "abc" } }));
+    expect(await gh.headSha(7)).toBe("abc");
+    expect(calls[0]!.args).toEqual([
+      "api",
+      "repos/me/app/pulls/7",
+      "--method",
+      "GET",
+    ]);
+  });
+
+  it("会話・行へのコメント・レビュー本文をまとめ、空のものは除く", async () => {
+    const { gh } = fakeGh((args) => {
+      const path = args[1]!;
+      if (path.startsWith("repos/me/app/issues/7/comments"))
+        return ok([
+          {
+            user: { login: "me" },
+            body: "/conductor approve",
+            created_at: "t1",
+          },
+          { user: null, body: "消えたユーザー", created_at: "t1" },
+        ]);
+      if (path.startsWith("repos/me/app/pulls/7/comments"))
+        return ok([
+          {
+            user: { login: "me" },
+            body: "ここ",
+            created_at: "t2",
+            path: "src/a.ts",
+            line: 3,
+          },
+        ]);
+      if (path.startsWith("repos/me/app/pulls/7/reviews"))
+        return ok([
+          { user: { login: "me" }, body: "", submitted_at: "t3" },
+          { user: { login: "me" }, body: "全体の感想", submitted_at: "t4" },
+        ]);
+      return undefined;
+    });
+    expect(await gh.prComments(7)).toEqual([
+      { author: "me", body: "/conductor approve", createdAt: "t1" },
+      {
+        author: "me",
+        body: "ここ",
+        createdAt: "t2",
+        path: "src/a.ts",
+        line: 3,
+      },
+      { author: "me", body: "全体の感想", createdAt: "t4" },
+    ]);
+  });
+
+  it("書き込み権限は write 以上。共同作業者でなければ false", async () => {
+    const { gh } = fakeGh((args) => {
+      if (args[1]!.includes("collaborators/me/"))
+        return ok({ permission: "admin" });
+      if (args[1]!.includes("collaborators/reader/"))
+        return ok({ permission: "read" });
+      return { code: 1, stdout: "", stderr: "HTTP 404" };
+    });
+    expect(await gh.canWrite("me")).toBe(true);
+    expect(await gh.canWrite("reader")).toBe(false);
+    expect(await gh.canWrite("stranger")).toBe(false);
+  });
+});

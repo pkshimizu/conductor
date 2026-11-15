@@ -3,9 +3,15 @@
  * - CI が失敗したら、失敗ログの要点を指摘として実装役に差し戻す
  * - CI が通ったら、レビュー役が差分・Issue・スクリーンショットを読んで判定する（読むだけ）
  *   .conductor/reviewer/*.md のレビュー観点ごとにレビュー役を並列で動かし、判定をまとめる
- * - 承認されたら squash でマージし、Issue を完了列に移す
+ * - 承認されたら merge.approval に従い、すぐマージするか人の承認待ちにする（approval.ts）
  */
 import type { z } from "zod";
+import {
+  afterApprove,
+  checkApproval,
+  type ApprovalBoard,
+  type ApprovalResult,
+} from "./approval.js";
 import {
   roleOutput,
   type Finding,
@@ -18,7 +24,7 @@ import type { Git } from "./git.js";
 import type { CiResult } from "./github.js";
 import { outputTail } from "./implementer.js";
 import { listAcceptance } from "./intake.js";
-import { recordRejection, type Board } from "./rejection.js";
+import { recordRejection } from "./rejection.js";
 import type { IssueKey, Store } from "./store.js";
 import { screenshotPath, testBranch, type TesterIssue } from "./tester.js";
 
@@ -39,9 +45,7 @@ export const DIFF_LIMIT = 60_000;
 /** スクリーンショットの撮影で、1つのコマンドに許す時間 */
 const SHOT_TIMEOUT_MS = 20 * 60 * 1000;
 
-export interface ReviewBoard extends Board {
-  ciStatus(pr: number): Promise<CiResult>;
-  merge(pr: number, issue: number, doneColumn: string): Promise<void>;
+export interface ReviewBoard extends ApprovalBoard {
   baseBranch(): Promise<string>;
 }
 
@@ -61,6 +65,7 @@ export interface ReviewerDeps {
   /** .conductor/reviewer/*.md のレビュー観点。1つにつき1つのレビュー役を動かす */
   perspectives: readonly RoleDoc[];
   model?: string;
+  now?: () => Date;
 }
 
 export type CiWaitResult =
@@ -76,6 +81,7 @@ export type CiWaitResult =
 
 export type ReviewerResult =
   | { status: "merged"; pr: number }
+  | { status: "awaiting-approval"; pr: number }
   | {
       status: "rejected";
       findings: string[];
@@ -297,21 +303,6 @@ async function reviewDiff(deps: ReviewerDeps, base: string): Promise<string> {
   return `（差分が長いので変更の一覧だけ示します。中身は git diff origin/${base}...HEAD や Read で確かめてください）\n${stat}`;
 }
 
-/** 承認された PR をマージし、Issue を完了列に移す */
-export async function mergeApproved(
-  deps: Pick<ReviewerDeps, "config" | "board" | "store">,
-  issue: number,
-): Promise<{ status: "merged"; pr: number } | { status: "waiting" }> {
-  const { config, board, store } = deps;
-  const key: IssueKey = { repo: config.github.repo, issue };
-  const record = await store.get(key);
-  if (record?.pr === undefined) return { status: "waiting" };
-  await store.update(key, { checkpoint: { stage: "merging" } });
-  await board.merge(record.pr, issue, config.github.columns.done);
-  await store.update(key, { checkpoint: undefined });
-  return { status: "merged", pr: record.pr };
-}
-
 /** CI が通った PR をレビュー役に確認させ、承認ならマージまで進める */
 export async function runReviewer(
   deps: ReviewerDeps,
@@ -324,6 +315,21 @@ export async function runReviewer(
   if (record?.pr === undefined) return { status: "waiting" };
   const pr = record.pr;
   const branch = record.branch ?? testBranch(issue.number);
+
+  // 人の承認待ちなら、レビューし直さずに PR のコメントだけを見る
+  if (record.checkpoint?.stage === "approving") {
+    const r = await checkApproval(deps, issue.number);
+    if (r.status === "rejected") {
+      return {
+        status: "rejected",
+        findings: r.findings,
+        rejections: record.rejections,
+        blocked: false,
+      };
+    }
+    if (r.status === "recheck") return { status: "waiting" };
+    return r;
+  }
 
   await git.discardAll();
   await git.startBranch(branch, branch);
@@ -393,5 +399,9 @@ export async function runReviewer(
     return { status: "rejected", findings, ...r };
   }
 
-  return mergeApproved(deps, issue.number);
+  const r: ApprovalResult = await afterApprove(deps, issue.number);
+  if (r.status === "merged" || r.status === "awaiting-approval") return r;
+  return { status: "waiting" };
 }
+
+export { mergeApproved } from "./approval.js";
