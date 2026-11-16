@@ -132,6 +132,69 @@ describe("Git（本物の git）", () => {
     }
   });
 
+  describe("mergeBase（main の取り込み）", () => {
+    let remote: string;
+    /** main と feature を分け、それぞれで files を書き換えて push する */
+    const diverge = async (
+      onMain: Record<string, string>,
+      onFeature: Record<string, string>,
+    ) => {
+      remote = await mkdtemp(join(tmpdir(), "conductor-remote-"));
+      execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+      sh("remote", "add", "origin", remote);
+      sh("push", "-q", "origin", "main");
+      sh("switch", "-q", "-c", "feature");
+      for (const [p, t] of Object.entries(onFeature)) await put(p, t);
+      sh("commit", "-q", "-am", "feat");
+      sh("push", "-q", "origin", "feature");
+      sh("switch", "-q", "main");
+      for (const [p, t] of Object.entries(onMain)) await put(p, t);
+      sh("commit", "-q", "-am", "main");
+      sh("push", "-q", "origin", "main");
+    };
+    afterEach(async () => {
+      if (remote) await rm(remote, { recursive: true, force: true });
+    });
+
+    it("衝突が無ければマージコミットを作り、空の配列を返す", async () => {
+      await diverge(
+        { "e2e/old.spec.ts": "main\n" },
+        { "src/app.ts": "feat\n" },
+      );
+      expect(await git.mergeBase("feature")).toEqual([]);
+      expect(sh("rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("feature");
+      expect(sh("show", "HEAD:e2e/old.spec.ts")).toBe("main\n");
+      expect(sh("show", "HEAD:src/app.ts")).toBe("feat\n");
+      expect(await git.isClean()).toBe(true);
+    });
+
+    it("衝突したらファイルを返し、commitMerge でしるしごとコミットできる", async () => {
+      await diverge(
+        { "src/app.ts": "main\n", "e2e/old.spec.ts": "main\n" },
+        { "src/app.ts": "feat\n", "e2e/old.spec.ts": "feat\n" },
+      );
+      expect(await git.mergeBase("feature")).toEqual([
+        "e2e/old.spec.ts",
+        "src/app.ts",
+      ]);
+      await git.commitMerge("merge");
+      expect(sh("show", "HEAD:src/app.ts")).toContain("<<<<<<<");
+      expect(sh("rev-parse", "HEAD^2").trim()).toBe(
+        sh("rev-parse", "origin/main").trim(),
+      );
+      expect(await git.isClean()).toBe(true);
+    });
+
+    it("abortMerge で取り込む前に戻る", async () => {
+      await diverge({ "src/app.ts": "main\n" }, { "src/app.ts": "feat\n" });
+      const before = sh("rev-parse", "origin/feature").trim();
+      expect(await git.mergeBase("feature")).toEqual(["src/app.ts"]);
+      await git.abortMerge();
+      expect(sh("rev-parse", "HEAD").trim()).toBe(before);
+      expect(await git.isClean()).toBe(true);
+    });
+  });
+
   it("失敗したら GitError を投げる", async () => {
     await expect(git.run(["rev-parse", "no-such-ref"])).rejects.toThrow(
       /git rev-parse no-such-ref が失敗しました/,

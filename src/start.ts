@@ -16,6 +16,7 @@ import { runLoop, type LoopDeps } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
 import type { Store } from "./store.js";
+import { syncMain } from "./sync.js";
 import { runTester } from "./tester.js";
 
 /** 記録の置き場所。対象リポジトリに混ざらないよう、ホームの下に置く */
@@ -86,6 +87,7 @@ export async function buildLoopDeps(
     checkCi: (issue) => checkCi(reviewerDeps, issue.number),
     review: (issue) => runReviewer(reviewerDeps, issue),
     merge: (issue) => mergeApproved(reviewerDeps, issue.number),
+    syncMain: (issue, pr) => syncMain(base, issue.number, pr),
   };
 }
 

@@ -127,6 +127,37 @@ export class Git {
     return (await this.run(["rev-parse", "HEAD"])).trim();
   }
 
+  /**
+   * origin の base を、origin の branch に取り込む（マージコミットを作る）。
+   * 衝突したらマージの途中のまま止め、衝突したファイルを返す。衝突が無ければ空の配列
+   */
+  async mergeBase(branch: string, base = "main"): Promise<string[]> {
+    await this.startBranch(branch, branch);
+    await this.run(["fetch", "origin", base]);
+    const args = ["merge", "--no-edit", `origin/${base}`];
+    const res = await this.exec(args, { cwd: this.cwd });
+    if (res.code === 0) return [];
+    const conflicts = splitZ(
+      await this.run(["diff", "--name-only", "--diff-filter=U", "-z"]),
+    ).sort();
+    if (conflicts.length === 0) {
+      throw new GitError(args, (res.stderr || res.stdout).trim());
+    }
+    return conflicts;
+  }
+
+  /** 途中のマージをやめる */
+  async abortMerge(): Promise<void> {
+    await this.run(["merge", "--abort"]);
+  }
+
+  /** 途中のマージを、衝突のしるしを残したままコミットする */
+  async commitMerge(message: string): Promise<string> {
+    await this.run(["add", "-A"]);
+    await this.run(["commit", "-q", "--no-verify", "-m", message]);
+    return (await this.run(["rev-parse", "HEAD"])).trim();
+  }
+
   /** origin の base から HEAD までの差分（stat なら変更の一覧） */
   async diffFrom(base: string, options: { stat?: boolean } = {}) {
     await this.run(["fetch", "-q", "origin", base]);

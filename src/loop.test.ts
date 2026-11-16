@@ -2,7 +2,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "./config.js";
 import {
-  conflictFinding,
   MAX_FAILURES,
   runLoop,
   newLoopState,
@@ -11,7 +10,6 @@ import {
   type LoopIssue,
   type StepResult,
 } from "./loop.js";
-import { pendingFindings } from "./rejection.js";
 import { storeFile } from "./start.js";
 import { MemoryStore, type Stage } from "./store.js";
 
@@ -77,6 +75,7 @@ function setup(
     },
     review: step("review"),
     merge: step("merge"),
+    syncMain: step("syncMain"),
     log: (text) => logs.push(text),
   };
   const setStage = (n: number, stage: Stage, pr = 10 + n) =>
@@ -139,24 +138,25 @@ describe("tick", () => {
     expect(t.calls).toEqual(["merge #2"]);
   });
 
-  it("衝突していたら実装役に差し戻し、次の確認で指摘を渡す", async () => {
+  it("レビュー待ちで衝突していたら、レビューせずに main を取り込む", async () => {
     const t = setup({ Reviewing: [2] }, { conflict: true });
     await t.setStage(2, "reviewing", 12);
     await tick(t.deps, newLoopState());
-    expect(t.calls).toEqual([]);
-    expect(t.moves).toEqual([[2, "Implementing"]]);
-    expect(t.comments[0]?.body).toContain(conflictFinding(12));
-    const record = await t.store.get({ repo: REPO, issue: 2 });
-    expect(record?.checkpoint?.stage).toBe("implementing");
-    expect(record?.rejections ?? 0).toBe(0);
-    expect(await pendingFindings(t.store, { repo: REPO, issue: 2 })).toEqual([
-      conflictFinding(12),
-    ]);
+    expect(t.calls).toEqual(["syncMain #2 12"]);
+  });
 
+  it("CI 待ちで衝突していたら、CI を見ずに main を取り込む", async () => {
+    const t = setup({ Reviewing: [2] }, { conflict: true });
+    await t.setStage(2, "ci", 12);
     await tick(t.deps, newLoopState());
-    expect(t.calls).toEqual([
-      `implement #2 ${JSON.stringify([conflictFinding(12)])}`,
-    ]);
+    expect(t.calls).toEqual(["syncMain #2 12"]);
+  });
+
+  it("衝突していなければ main を取り込まない", async () => {
+    const t = setup({ Reviewing: [2] });
+    await t.setStage(2, "reviewing", 12);
+    await tick(t.deps, newLoopState());
+    expect(t.calls).toEqual(["review #2"]);
   });
 
   it(`${MAX_FAILURES} 回続けて失敗したら Blocked にしてメンションする`, async () => {
