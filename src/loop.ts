@@ -6,7 +6,7 @@
  */
 import { setTimeout as delay } from "node:timers/promises";
 import type { Config } from "./config.js";
-import { pendingFindings, REJECT } from "./rejection.js";
+import { pendingFindings } from "./rejection.js";
 import type { IssueKey, IssueRecord, Stage, Store } from "./store.js";
 
 /** 確認の間隔 */
@@ -52,6 +52,8 @@ export interface LoopDeps {
   review(issue: LoopIssue): Promise<StepResult>;
   /** マージの途中で止まったときの続き */
   merge(issue: LoopIssue): Promise<StepResult>;
+  /** PR が main と衝突したとき、main を取り込む（衝突の内容に応じてテスト役・実装役に回す） */
+  syncMain(issue: LoopIssue, pr: number): Promise<StepResult>;
   log(text: string): void;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -65,10 +67,6 @@ export interface LoopState {
 
 export function newLoopState(): LoopState {
   return { failures: new Map() };
-}
-
-export function conflictFinding(pr: number): string {
-  return `PR #${pr} が main と衝突しています。main を取り込み、衝突を解消してください。`;
 }
 
 export function failureComment(
@@ -104,30 +102,16 @@ function stageOf(
   return "testing";
 }
 
-/** 衝突していれば実装役に差し戻す（差し戻しの上限には数えない） */
-async function sendBackIfConflict(
+/** 衝突していれば指揮役が main を取り込む。取り込んだら結果を返す */
+async function syncIfConflict(
   deps: LoopDeps,
   issue: LoopIssue,
-): Promise<boolean> {
+): Promise<StepResult | undefined> {
   const { config, store, board } = deps;
   const key: IssueKey = { repo: config.github.repo, issue: issue.number };
   const pr = (await store.get(key))?.pr;
-  if (pr === undefined || !(await board.hasConflict(pr))) return false;
-  const finding = conflictFinding(pr);
-  await store.update(key, {
-    checkpoint: { stage: "implementing", reason: "conflict" },
-  });
-  await store.addSummary(key, {
-    role: "conductor",
-    verdict: REJECT,
-    text: finding,
-  });
-  await board.moveIssue(issue.number, config.github.columns.implementing);
-  await board.comment(
-    issue.number,
-    `${finding}\n\n実装役に直させます（差し戻しの上限には数えません）。`,
-  );
-  return true;
+  if (pr === undefined || !(await board.hasConflict(pr))) return undefined;
+  return deps.syncMain(issue, pr);
 }
 
 /** 1段階進める */
@@ -143,14 +127,14 @@ async function advance(
     case "implementing":
       return deps.implement(issue, await pendingFindings(deps.store, key));
     case "ci": {
-      if (await sendBackIfConflict(deps, issue)) return { status: "conflict" };
+      const synced = await syncIfConflict(deps, issue);
+      if (synced) return synced;
       const ci = await deps.checkCi(issue);
       return ci.status === "passed" ? deps.review(issue) : ci;
     }
     case "reviewing":
     case "approving":
-      if (await sendBackIfConflict(deps, issue)) return { status: "conflict" };
-      return deps.review(issue);
+      return (await syncIfConflict(deps, issue)) ?? deps.review(issue);
     case "merging":
       return deps.merge(issue);
   }
