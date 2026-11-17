@@ -13,7 +13,12 @@ import { matchesAny } from "./git.js";
 import { listAcceptance } from "./intake.js";
 import { recordRejection, type Board } from "./rejection.js";
 import type { IssueKey, Store } from "./store.js";
-import { hashTargets, testBranch, type TesterIssue } from "./tester.js";
+import {
+  formatWritten,
+  hashTargets,
+  testBranch,
+  type TesterIssue,
+} from "./tester.js";
 
 export const implementerOutputSchema = roleOutput({});
 export type ImplementerOutput = z.infer<typeof implementerOutputSchema>;
@@ -286,7 +291,17 @@ export async function runImplementer(
       `変えてはいけないファイルを変えたので戻しました: ${touched.join("、")}`,
     );
   }
-  const rest = changed.filter((f) => !touched.includes(f));
+  let rest = changed.filter((f) => !touched.includes(f));
+  if (rest.length > 0) {
+    // 整形してからコミットする（CI の整形チェックで落ちないように）。
+    // 整形で変わった保護対象は戻す（ハッシュを変えないため。実装役の誤りではない）
+    const formatProblem = await formatWritten(
+      deps,
+      (f) => !matchesAny(f, forbidden),
+    );
+    if (formatProblem) problems.push(formatProblem);
+    rest = await git.changedFiles();
+  }
   if (rest.length > 0) {
     await git.commit(rest, `feat: #${issue.number} の実装`);
   }

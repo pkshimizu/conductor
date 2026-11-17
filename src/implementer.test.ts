@@ -25,12 +25,13 @@ const BODY = `### 受け入れ条件（AC）
 const ISSUE = { number: 2, title: "カード一覧", body: BODY };
 const KEY = { repo: "me/app", issue: 2 };
 
-function makeConfig() {
+function makeConfig(format?: string) {
+  const fmt = format ? `, format: ${format}` : "";
   return parseConfig(
     [
       "github: { repo: me/app, project: 3, notify: me }",
       "protected: [e2e/**, supabase/seed.sql]",
-      "commands: { setup: npm run db:reset, test: npm test, acceptance: npm run e2e, typecheck: npm run typecheck, build: npm run build }",
+      `commands: { setup: npm run db:reset, test: npm test, acceptance: npm run e2e, typecheck: npm run typecheck, build: npm run build${fmt} }`,
     ].join("\n"),
   );
 }
@@ -44,9 +45,14 @@ type Step = {
 
 function setup(
   steps: Step[],
-  options: { failing?: string; noRecord?: boolean } = {},
+  options: {
+    failing?: string;
+    noRecord?: boolean;
+    /** 整形の偽物。作業中のファイルを書き換え、終了コードを返す */
+    format?: (files: Map<string, string>) => number;
+  } = {},
 ) {
-  const config = makeConfig();
+  const config = makeConfig(options.format ? "npm run format" : undefined);
   const store = new MemoryStore(() => new Date("2026-11-15T00:00:00Z"));
   const files = new Map<string, string>();
   const log: string[] = [];
@@ -111,6 +117,14 @@ function setup(
     },
     shell: (cmd): Promise<ExecResult> => {
       commands.push(cmd);
+      if (cmd === "npm run format" && options.format) {
+        const code = options.format(files);
+        return Promise.resolve({
+          code,
+          stdout: "",
+          stderr: code ? "SyntaxError: x" : "",
+        });
+      }
       return Promise.resolve(
         cmd === options.failing
           ? { code: 1, stdout: "\u001b[31m1 failed\u001b[0m\n", stderr: "" }
@@ -225,6 +239,66 @@ describe("runImplementer", () => {
     expect(run.role).toBe("implementer");
     expect(run.deny).toContain("Edit(./e2e/**)");
     expect(run.systemPrompt).toContain("App Router");
+  });
+
+  it("commands.format があれば整形してからコミットし、整形で変わった保護対象は黙って戻す", async () => {
+    const s = setup([{ output: approve, write: { "src/a.ts": "x" } }], {
+      format: (files) => {
+        files.set("src/a.ts", "x // 整形済み");
+        files.set("src/b.ts", "ついでに整形");
+        files.set("e2e/cards.spec.ts", "整形で変わった");
+        return 0;
+      },
+    });
+    await s.init();
+    const r = await runImplementer(s.deps, ISSUE);
+    expect(r).toEqual({ status: "submitted", pr: 7, url: "https://x/pull/7" });
+    expect(s.commands[0]).toBe("npm run format");
+    expect(s.log).toContain("discard e2e/cards.spec.ts");
+    expect(s.log).toContain("commit src/a.ts,src/b.ts feat: #2 の実装");
+    expect(s.log.indexOf("discard e2e/cards.spec.ts")).toBeLessThan(
+      s.log.findIndex((l) => l.startsWith("commit")),
+    );
+  });
+
+  it("実装役が変えた保護対象は、整形があっても差し戻しの対象になる", async () => {
+    const s = setup(
+      [
+        {
+          output: approve,
+          write: { "e2e/x.spec.ts": "改変", "src/a.ts": "x" },
+        },
+      ],
+      { format: () => 0 },
+    );
+    await s.init();
+    const r = await runImplementer(s.deps, ISSUE);
+    expect(r.status).toBe("rejected");
+    if (r.status !== "rejected") return;
+    expect(r.findings).toEqual([
+      "変えてはいけないファイルを変えたので戻しました: e2e/x.spec.ts",
+    ]);
+  });
+
+  it("整形が失敗したら、変更は push したうえで出力の末尾を指摘にして差し戻す", async () => {
+    const s = setup([{ output: approve, write: { "src/a.ts": "x" } }], {
+      format: () => 2,
+    });
+    await s.init();
+    const r = await runImplementer(s.deps, ISSUE);
+    expect(r.status).toBe("rejected");
+    if (r.status !== "rejected") return;
+    expect(r.findings[0]).toContain("整形（npm run format）が失敗しました");
+    expect(r.findings[0]).toContain("SyntaxError: x");
+    expect(s.log).toContain("push conductor/issue-2");
+    expect(s.commands).toEqual(["npm run format"]);
+  });
+
+  it("変更が無ければ整形しない", async () => {
+    const s = setup([{ output: approve }], { format: () => 0 });
+    await s.init();
+    await runImplementer(s.deps, ISSUE);
+    expect(s.commands).not.toContain("npm run format");
   });
 
   it("PR が既にあれば作らずに使う", async () => {
