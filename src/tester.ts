@@ -233,11 +233,17 @@ export function failedComment(problems: string[], ready: string): string {
 const FORMAT_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
- * commands.format があれば実行する。保護対象の外に出た変更は捨てる。
- * 失敗したら、テスト役への指摘を返す
+ * commands.format があれば実行する。keep に当たらないファイルの変更は捨てる
+ * （既定は保護対象だけを残す＝テスト役用）。失敗したら、役への指摘を返す
  */
 export async function formatWritten(
-  deps: Pick<TesterDeps, "config" | "repoDir" | "git" | "shell">,
+  deps: {
+    config: Config;
+    repoDir: string;
+    git: Pick<Git, "changedFiles" | "discard">;
+    shell: Shell;
+  },
+  keep: (path: string) => boolean = (f) => matchesAny(f, deps.config.protected),
 ): Promise<string | undefined> {
   const cmd = deps.config.commands.format;
   if (!cmd) return undefined;
@@ -246,9 +252,8 @@ export async function formatWritten(
     timeoutMs: FORMAT_TIMEOUT_MS,
   });
   const changed = await deps.git.changedFiles();
-  await deps.git.discard(
-    changed.filter((f) => !matchesAny(f, deps.config.protected)),
-  );
+  const drop = changed.filter((f) => !keep(f));
+  if (drop.length > 0) await deps.git.discard(drop);
   if (res.code === 0) return undefined;
   const tail = `${res.stdout}\n${res.stderr}`
     .split(/\r?\n/)
