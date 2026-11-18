@@ -26,7 +26,7 @@ export type ImplementerOutput = z.infer<typeof implementerOutputSchema>;
 export const IMPLEMENTER_RULES = `あなたは実装役です。テスト役が先に書いた受け入れテストが通るように実装します。
 
 - 依頼文で示す「変えてはいけないファイル」（受け入れテスト・seed・.conductor/）は変えません。変えると差し戻しになり、変更は戻されます。
-- 受け入れテストが Issue の受け入れ条件（AC）と食い違っていると思ったら、テストは変えずに verdict を "objection" にし、理由を findings に書きます。
+- 受け入れテストに不備がある（Issue の受け入れ条件（AC）と食い違う、テスト同士がデータを取り合う など）と思ったら、テストは変えずに verdict を "objection" にし、どのテストのどこが問題かを findings に書きます。テスト役がその指摘を受けてテストを書き直します。
 - 単体テストは、変えてはいけないファイルの外に自由に足してかまいません。
 - 終わる前に、依頼文の確認のコマンドを自分で実行し、通ることを確かめます。
 - git のコミット・push・ブランチの操作はしません。指揮役が行います。
@@ -186,19 +186,43 @@ export async function runChecks(
   return undefined;
 }
 
+/** 実装役の異議を、テスト役に渡す指摘にする（要約と、ファイル・行ごとの指摘） */
+export function objectionFindings(out: ImplementerOutput): string[] {
+  return [
+    out.summary,
+    ...out.findings.map(
+      (f) => `${f.file}${f.line === null ? "" : `:${f.line}`}: ${f.message}`,
+    ),
+  ].filter((s) => s.trim() !== "");
+}
+
+function bullets(lines: string[]): string[] {
+  return lines.map((l) => `- ${l.replace(/\n+/g, " ")}`);
+}
+
 export function objectionComment(
   out: ImplementerOutput,
+  objections: number,
+  limit: number,
+): string {
+  return [
+    `実装役が受け入れテストの不備を指摘しました（異議 ${objections}/${limit} 回目）。テスト役に次の指摘を渡して、テストを書き直します。`,
+    "",
+    ...bullets(objectionFindings(out)),
+  ].join("\n");
+}
+
+export function objectionLimitComment(
+  out: ImplementerOutput,
+  limit: number,
   ready: string,
 ): string {
   return [
-    "実装役が、受け入れテストと受け入れ条件の食い違いを指摘しました。確認してください。",
+    `異議が上限（${limit} 回）を超えたため、Blocked に移しました。最後の実装役の指摘:`,
     "",
-    out.summary,
-    ...out.findings.map(
-      (f) => `- ${f.file}${f.line === null ? "" : `:${f.line}`}: ${f.message}`,
-    ),
+    ...bullets(objectionFindings(out)),
     "",
-    `直したら ${ready} 列に戻してください。`,
+    `Issue か受け入れテストを確かめたら ${ready} 列に戻してください。`,
   ].join("\n");
 }
 
@@ -264,19 +288,34 @@ export async function runImplementer(
   if (out.verdict === "objection") {
     await git.discardAll();
     const objections = record.objections + 1;
+    const limit = config.limits.objections;
+    const over = objections > limit;
+    // 上限までは、テスト役に指摘を渡してテストを書き直させる
     await store.update(key, {
       objections,
-      checkpoint: { stage: "implementing", reason: "objection" },
+      checkpoint: over
+        ? { stage: "implementing", reason: "objection" }
+        : { stage: "testing", reason: "objection" },
     });
     await store.addSummary(key, {
       role: "implementer",
       verdict: "objection",
-      text: out.summary,
+      text: objectionFindings(out).join("\n\n"),
     });
-    await board.moveIssue(issue.number, columns.blocked);
-    await board.comment(issue.number, objectionComment(out, columns.ready), {
-      mention: true,
-    });
+    if (over) {
+      await board.moveIssue(issue.number, columns.blocked);
+      await board.comment(
+        issue.number,
+        objectionLimitComment(out, limit, columns.ready),
+        { mention: true },
+      );
+    } else {
+      await board.moveIssue(issue.number, columns.testing);
+      await board.comment(
+        issue.number,
+        objectionComment(out, objections, limit),
+      );
+    }
     return { status: "objection", objections };
   }
 

@@ -273,6 +273,32 @@ describe("runTester", () => {
     expect(s.g.log).toContain("discardAll");
   });
 
+  it("実装役の異議で戻ったら、その指摘を最初の依頼から渡し続ける", async () => {
+    const s = setup([
+      { output: approve([TESTS[0]!]), write: { "e2e/cards.spec.ts": SPEC } },
+      { output: approve(TESTS), write: { "e2e/cards.spec.ts": SPEC } },
+    ]);
+    await s.store.addSummary(
+      { repo: "me/app", issue: 2 },
+      {
+        role: "implementer",
+        verdict: "objection",
+        text: "AC3 のデータが別の spec と衝突する\n\ne2e/a.spec.ts:9: apple-AC3 が重複",
+      },
+    );
+    const r = await runTester(s.deps, ISSUE);
+    expect(r.status).toBe("committed");
+    for (const run of s.runs) {
+      expect(run.prompt).toContain(
+        "- 実装役の指摘: AC3 のデータが別の spec と衝突する",
+      );
+      expect(run.prompt).toContain(
+        "- 実装役の指摘: e2e/a.spec.ts:9: apple-AC3 が重複",
+      );
+    }
+    expect(s.runs[1]!.prompt).toContain("AC2 のテストがありません");
+  });
+
   it("撮影の指定があるのに撮っていなければ問題にする", async () => {
     const bad = 'test("AC1: 空", () => {}); test("AC2: 追加", () => {});';
     const s = setup(

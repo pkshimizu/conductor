@@ -10,6 +10,7 @@ import type { Shell } from "./exec.js";
 import type { Git } from "./git.js";
 import { matchesAny } from "./git.js";
 import { listAcceptance } from "./intake.js";
+import { pendingObjection } from "./rejection.js";
 import type { IssueKey, Store } from "./store.js";
 
 export const testerOutputSchema = roleOutput({
@@ -277,12 +278,14 @@ export async function runTester(
   const record = await store.get(key);
   if (record && record.objections > limit) return { status: "waiting" };
 
+  // 実装役の異議で戻ってきたときは、その指摘を最初から渡す
+  const objection = await pendingObjection(store, key);
   const acs = listAcceptance(issue.body);
   const branch = testBranch(issue.number);
   await git.startBranch(branch);
   await store.update(key, { branch, checkpoint: { stage: "testing" } });
 
-  let feedback: string[] = [];
+  let feedback: string[] = objection;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const result = await deps.run({
       role: "tester",
@@ -370,7 +373,7 @@ export async function runTester(
     }
 
     await git.discardAll();
-    feedback = problems;
+    feedback = [...objection, ...problems];
     if (attempt === maxAttempts) {
       await store.update(key, {
         checkpoint: { stage: "testing", reason: "failed" },

@@ -12,7 +12,11 @@ import {
   type ImplementerOutput,
   type implementerOutputSchema,
 } from "./implementer.js";
-import { pendingFindings, recordRejection } from "./rejection.js";
+import {
+  pendingFindings,
+  pendingObjection,
+  recordRejection,
+} from "./rejection.js";
 import { MemoryStore } from "./store.js";
 
 const BODY = `### 受け入れ条件（AC）
@@ -388,28 +392,53 @@ describe("runImplementer", () => {
     expect(s.runs).toHaveLength(1);
   });
 
-  it("異議なら変更を捨てて Blocked にし、メンションする", async () => {
-    const s = setup([
-      {
-        output: {
-          verdict: "objection",
-          summary: "AC1 とテストの文言が違う",
-          findings: [
-            { file: "e2e/cards.spec.ts", line: 3, message: "「ありません」" },
-          ],
-        },
-        write: { "src/a.ts": "x" },
-      },
-    ]);
+  const objectionStep = {
+    output: {
+      verdict: "objection" as const,
+      summary: "AC1 とテストの文言が違う",
+      findings: [
+        { file: "e2e/cards.spec.ts", line: 3, message: "「ありません」" },
+      ],
+    },
+    write: { "src/a.ts": "x" },
+  };
+
+  it("異議なら変更を捨て、指摘を記録してテスト役の列に戻す", async () => {
+    const s = setup([objectionStep]);
     await s.init();
     const r = await runImplementer(s.deps, ISSUE);
     expect(r).toEqual({ status: "objection", objections: 1 });
     expect(s.files.size).toBe(0);
-    expect(s.moves.at(-1)).toEqual([2, "Blocked"]);
+    expect(s.moves.at(-1)).toEqual([2, "Testing"]);
+    expect(s.comments[0]!.body).toContain("異議 1/2 回目");
     expect(s.comments[0]!.body).toContain(
-      "e2e/cards.spec.ts:3: 「ありません」",
+      "- e2e/cards.spec.ts:3: 「ありません」",
     );
-    expect(s.comments[0]!.mention).toBe(true);
+    expect(s.comments[0]!.mention).toBeFalsy();
+    const record = await s.deps.store.get(KEY);
+    expect(record?.checkpoint).toEqual({
+      stage: "testing",
+      reason: "objection",
+    });
+    expect(await pendingObjection(s.deps.store, KEY)).toEqual([
+      "実装役の指摘: AC1 とテストの文言が違う",
+      "実装役の指摘: e2e/cards.spec.ts:3: 「ありません」",
+    ]);
+    // 実装役の異議は、次の実装役への差し戻しの指摘にはしない
+    expect(await pendingFindings(s.deps.store, KEY)).toEqual([]);
+  });
+
+  it("異議が上限を超えたら Blocked にしてメンションする", async () => {
+    const s = setup([objectionStep, objectionStep, objectionStep]);
+    await s.init();
+    await runImplementer(s.deps, ISSUE);
+    await runImplementer(s.deps, ISSUE);
+    const r = await runImplementer(s.deps, ISSUE);
+    expect(r).toEqual({ status: "objection", objections: 3 });
+    expect(s.moves.at(-1)).toEqual([2, "Blocked"]);
+    expect(s.comments.at(-1)!.body).toContain("上限（2 回）");
+    expect(s.comments.at(-1)!.body).toContain("Ready 列に戻してください");
+    expect(s.comments.at(-1)!.mention).toBe(true);
   });
 
   it("テスト役の記録（ハッシュ）が無ければ動かない", async () => {
