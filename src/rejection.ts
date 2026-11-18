@@ -110,3 +110,18 @@ export async function pendingFindings(
   if (!last || last.verdict !== REJECT) return [];
   return last.text.split("\n\n").filter((s) => s.trim() !== "");
 }
+
+/** 次のテスト役に渡す指摘。最後の記録が実装役の異議なら、その中身を返す */
+export async function pendingObjection(
+  store: Store,
+  key: IssueKey,
+): Promise<string[]> {
+  const last = (await store.summaries(key)).at(-1);
+  if (!last || last.role !== "implementer" || last.verdict !== "objection") {
+    return [];
+  }
+  return last.text
+    .split("\n\n")
+    .filter((s) => s.trim() !== "")
+    .map((s) => `実装役の指摘: ${s}`);
+}
