@@ -6,6 +6,7 @@
 import type { PrComment } from "./approval.js";
 import type { Config } from "./config.js";
 import { commandExec, type Exec } from "./exec.js";
+import type { WorkIssueStatus } from "./progress.js";
 
 /** Projects の状態欄の名前（GitHub の既定） */
 export const STATUS_FIELD = "Status";
@@ -240,6 +241,38 @@ export class GitHub {
   async addToProject(issue: number): Promise<void> {
     const { projectId } = await this.loadMeta();
     await this.ensureItem(issue, projectId);
+  }
+
+  // ---- 着手と完了（progress.ts） ----
+
+  /**
+   * 作業用 Issue 1件の今の様子（この Project の状態欄・本文・この Issue を閉じたマージ済みの PR）。
+   * 閉じた Issue でも取れる
+   */
+  async workIssueStatus(issue: number): Promise<WorkIssueStatus> {
+    const { projectId } = await this.loadMeta();
+    const data = await this.graphql<IssueStatusResult>(ISSUE_STATUS_QUERY, {
+      owner: this.owner,
+      name: this.name,
+      number: issue,
+      field: STATUS_FIELD,
+    });
+    const node = data.repository?.issue;
+    if (!node) throw new GitHubError(`Issue #${issue} が見つかりません`);
+    const item = node.projectItems.nodes.find(
+      (i) => i.project.id === projectId,
+    );
+    const column = item?.fieldValueByName?.name;
+    const merged = node.closedByPullRequestsReferences.nodes.find(
+      (pr) => pr.merged,
+    );
+    return {
+      body: node.body,
+      ...(column === undefined ? {} : { column }),
+      ...(merged === undefined
+        ? {}
+        : { merged: { number: merged.number, url: merged.url } }),
+    };
   }
 
   // ---- AC4: CI ----
@@ -640,6 +673,43 @@ query($owner: String!, $name: String!, $number: Int!) {
     issue(number: $number) {
       id
       projectItems(first: 50) { nodes { id project { id } } }
+    }
+  }
+}`;
+
+interface IssueStatusResult {
+  repository: {
+    issue: {
+      body: string;
+      projectItems: {
+        nodes: {
+          project: { id: string };
+          fieldValueByName: { name?: string } | null;
+        }[];
+      };
+      closedByPullRequestsReferences: {
+        nodes: { number: number; url: string; merged: boolean }[];
+      };
+    } | null;
+  } | null;
+}
+
+const ISSUE_STATUS_QUERY = `
+query($owner: String!, $name: String!, $number: Int!, $field: String!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      body
+      projectItems(first: 50) {
+        nodes {
+          project { id }
+          fieldValueByName(name: $field) {
+            ... on ProjectV2ItemFieldSingleSelectValue { name }
+          }
+        }
+      }
+      closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+        nodes { number url merged }
+      }
     }
   }
 }`;

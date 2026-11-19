@@ -21,6 +21,7 @@ import { Git } from "./git.js";
 import { githubFromConfig } from "./github.js";
 import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
+import { checkProgress } from "./progress.js";
 import { runLoop, type LoopDeps } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
@@ -144,6 +145,14 @@ export async function buildLoopDeps(
             },
             requirement,
           );
+  const progress =
+    chat === undefined
+      ? undefined
+      : (requirement: RequirementRecord) =>
+          checkProgress(
+            { config, chat, store, board: github, log },
+            requirement,
+          );
 
   return {
     config,
@@ -153,6 +162,7 @@ export async function buildLoopDeps(
     ...(specify === undefined ? {} : { specify }),
     ...(approveSpec === undefined ? {} : { approveSpec }),
     ...(decompose === undefined ? {} : { decompose }),
+    ...(progress === undefined ? {} : { progress }),
     log,
     pickUp: (issue) => pickUp(github, issue, config.github.columns),
     test: (issue) =>

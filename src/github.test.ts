@@ -315,6 +315,67 @@ describe("分解役に使う API", () => {
   });
 });
 
+describe("着手と完了に使う API", () => {
+  function statusHandler(issue: unknown) {
+    return (_: string[], input: string) => {
+      const { query: q } = query(input);
+      if (q.includes("projectV2(number")) return ok({ data: META });
+      if (q.includes("closedByPullRequestsReferences"))
+        return ok({ data: { repository: { issue } } });
+      return undefined;
+    };
+  }
+
+  it("この Project の列・本文・マージ済みの PR を返す", async () => {
+    const { gh, calls } = fakeGh(
+      statusHandler({
+        body: "本文",
+        projectItems: {
+          nodes: [
+            { project: { id: "P9" }, fieldValueByName: { name: "Testing" } },
+            { project: { id: "P1" }, fieldValueByName: { name: "Done" } },
+          ],
+        },
+        closedByPullRequestsReferences: {
+          nodes: [
+            { number: 30, url: "https://x/pull/30", merged: false },
+            { number: 31, url: "https://x/pull/31", merged: true },
+          ],
+        },
+      }),
+    );
+    expect(await gh.workIssueStatus(7)).toEqual({
+      body: "本文",
+      column: "Done",
+      merged: { number: 31, url: "https://x/pull/31" },
+    });
+    expect(query(calls.at(-1)!.input).variables).toEqual({
+      owner: "me",
+      name: "app",
+      number: 7,
+      field: "Status",
+    });
+  });
+
+  it("列が未設定でマージ済みの PR が無ければ、どちらも返さない", async () => {
+    const { gh } = fakeGh(
+      statusHandler({
+        body: "本文",
+        projectItems: {
+          nodes: [{ project: { id: "P1" }, fieldValueByName: null }],
+        },
+        closedByPullRequestsReferences: { nodes: [] },
+      }),
+    );
+    expect(await gh.workIssueStatus(7)).toEqual({ body: "本文" });
+  });
+
+  it("Issue が無ければ失敗する", async () => {
+    const { gh } = fakeGh(statusHandler(null));
+    await expect(gh.workIssueStatus(7)).rejects.toThrow("#7");
+  });
+});
+
 describe("AC4: CI", () => {
   const checks = (...buckets: string[]) =>
     buckets.map((bucket, i) => ({

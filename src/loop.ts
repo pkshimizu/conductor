@@ -72,6 +72,8 @@ export interface LoopDeps {
   approveSpec?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 分解に進めた要件1件を作業用 Issue に分ける。窓口があるときに start.ts がつなぐ。無ければ分解しない */
   decompose?: (requirement: RequirementRecord) => Promise<StepResult>;
+  /** 分解済みの要件1件の作業用 Issue を確かめ、着手できる Issue を Ready に移し、すべてマージされたら完了を知らせる。窓口があるときに start.ts がつなぐ。無ければ確かめない */
+  progress?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -315,13 +317,50 @@ async function decomposeRequirements(deps: LoopDeps): Promise<void> {
   }
 }
 
-/** 1回分の確認。要件の受け取り・仕様化・仕様の承認・分解と、作業中の Issue の処理を行う */
+/**
+ * スレッドがあり作業中で、作業用 Issue がある要件の進み具合を確かめる（progress があるときだけ）。
+ * 分解した直後の要件も拾うよう、分解の後に一覧を読み直す。Ready に移した Issue は同じ確認で拾う。
+ * 失敗しても Issue の処理は止めない（次の確認でやり直す）
+ */
+async function progressRequirements(deps: LoopDeps): Promise<void> {
+  const { progress } = deps;
+  if (progress === undefined) return;
+  let requirements: RequirementRecord[];
+  try {
+    requirements = await deps.store.listRequirements();
+  } catch (e) {
+    deps.log(`要件の一覧を読めませんでした: ${errorMessage(e)}`);
+    return;
+  }
+  for (const r of requirements) {
+    if (
+      r.threadId === undefined ||
+      r.state !== "working" ||
+      r.workIssues.length === 0
+    ) {
+      continue;
+    }
+    try {
+      const result = await progress(r);
+      if (result.status !== "waiting") {
+        deps.log(`要件 ${r.messageId}: ${result.status}`);
+      }
+    } catch (e) {
+      deps.log(
+        `要件 ${r.messageId} の作業用 Issue の確認に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
+      );
+    }
+  }
+}
+
+/** 1回分の確認。要件の受け取り・仕様化・仕様の承認・分解・作業用 Issue の着手と完了と、作業中の Issue の処理を行う */
 export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   const { config, store, board } = deps;
   await intakeRequirements(deps);
   await specifyRequirements(deps);
   await approveSpecs(deps);
   await decomposeRequirements(deps);
+  await progressRequirements(deps);
   const { columns, repo } = config.github;
   const byColumn = await board.issuesByColumn();
   const inColumn = (column: string) =>
