@@ -6,7 +6,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { mergeApproved } from "./approval.js";
 import { type ClaudeDeps, realDeps, runRole, withLanguage } from "./claude.js";
-import { loadRoleDocs, loadRoleInstructions, type Config } from "./config.js";
+import type { Chat } from "./chat.js";
+import {
+  chatTokenProblem,
+  type Config,
+  DISCORD_TOKEN_ENV,
+  loadRoleDocs,
+  loadRoleInstructions,
+} from "./config.js";
+import { DiscordChat } from "./discord.js";
 import { shellExec } from "./exec.js";
 import { Git } from "./git.js";
 import { githubFromConfig } from "./github.js";
@@ -34,6 +42,20 @@ export function roleRunner(
 ) {
   return <T extends { systemPrompt: string }>(r: T) =>
     runRole(withLanguage(r, config.language) as never, claude) as never;
+}
+
+/**
+ * 設定から窓口を作る。config.chat が無ければ undefined（要件を受け取らない）。
+ * トークンは環境変数から読む（無ければ conductor start の前に止めている）
+ */
+export function chatFromConfig(
+  config: Pick<Config, "chat">,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Chat | undefined {
+  if (config.chat === undefined) return undefined;
+  const token = env[DISCORD_TOKEN_ENV]?.trim();
+  if (!token) throw new Error(chatTokenProblem(config, env));
+  return new DiscordChat({ token, channels: config.chat.channels });
 }
 
 export async function buildLoopDeps(
@@ -67,10 +89,13 @@ export async function buildLoopDeps(
     perspectives,
   };
 
+  const chat = chatFromConfig(config);
+
   return {
     config,
     store,
     board: github,
+    ...(chat === undefined ? {} : { chat }),
     log,
     pickUp: (issue) => pickUp(github, issue, config.github.columns),
     test: (issue) =>

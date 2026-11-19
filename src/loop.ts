@@ -2,11 +2,14 @@
  * 常駐ループ（conductor start）。
  * 一定の間隔で GitHub を確かめ、作業中の Issue を1段階進める。作業中の Issue が無ければ Ready から1件拾う。
  * 承認待ちの Issue は作業中に数えず、毎回コメントだけを確かめる。
+ * 窓口（chat）があれば、Issue の処理とは別に要件チャンネルの新しい投稿も毎回受け取る。
  * 既存の各役とは、このファイルで定めた LoopDeps を通してつなぐ（つなぎ方は start.ts）。
  */
 import { setTimeout as delay } from "node:timers/promises";
+import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
 import { pendingFindings } from "./rejection.js";
+import { receiveRequirements } from "./requirements.js";
 import type { IssueKey, IssueRecord, Stage, Store } from "./store.js";
 
 /** 確認の間隔 */
@@ -55,6 +58,8 @@ export interface LoopDeps {
   /** PR が main と衝突したとき、main を取り込む（衝突の内容に応じてテスト役・実装役に回す） */
   syncMain(issue: LoopIssue, pr: number): Promise<StepResult>;
   log(text: string): void;
+  /** 窓口。config.chat があるときに start.ts がつなぐ。無ければ要件を受け取らない */
+  chat?: Chat;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -175,9 +180,32 @@ async function attempt(
   }
 }
 
-/** 1回分の確認 */
+/**
+ * 要件チャンネルの新しい投稿を受け取る（窓口があるときだけ）。
+ * 失敗しても Issue の処理は止めない（次の確認で続きから読む）
+ */
+async function intakeRequirements(deps: LoopDeps): Promise<void> {
+  const { chat } = deps;
+  const chatConfig = deps.config.chat;
+  if (chat === undefined || chatConfig === undefined) return;
+  try {
+    await receiveRequirements({
+      chat,
+      chatConfig,
+      store: deps.store,
+      log: deps.log,
+    });
+  } catch (e) {
+    deps.log(
+      `要件の受け取りに失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
+    );
+  }
+}
+
+/** 1回分の確認。要件の受け取りと、作業中の Issue の処理を行う */
 export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   const { config, store, board } = deps;
+  await intakeRequirements(deps);
   const { columns, repo } = config.github;
   const byColumn = await board.issuesByColumn();
   const inColumn = (column: string) =>
