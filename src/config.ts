@@ -97,6 +97,11 @@ export const configSchema = z
     screenshots: text.optional(),
     /** GitHub を確認する間隔（秒） */
     poll_interval: z.number().int().min(10).default(90),
+    /**
+     * 役が書く文章（summary・findings・questions）の言語。例: 日本語、English。
+     * conductor が書く定型文は対象外
+     */
+    language: text.default("日本語"),
     roles: z
       .object({
         tester: roleSchema.prefault({}),

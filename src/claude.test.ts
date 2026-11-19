@@ -12,6 +12,7 @@ import {
   roleOutput,
   runRole,
   toJsonSchema,
+  withLanguage,
 } from "./claude.js";
 
 const OK = {
@@ -94,6 +95,24 @@ describe("AC1: 決まりと依頼文の渡し方", () => {
     expect(c!.args).not.toContain("--continue");
     // 依頼文は引数に含めない（長文・記号で壊れないように）
     expect(c!.args.join(" ")).not.toContain("Issue #2 の本文");
+  });
+});
+
+describe("出力の言語", () => {
+  it("決まりのファイルの最後に言語の指示が入る", async () => {
+    const { deps, calls } = fakeDeps([
+      { code: 0, stdout: cliJson({ structured_output: OK }), stderr: "" },
+    ]);
+    await runRole(withLanguage(RUN, "English"), deps);
+    const prompt = calls[0]!.systemPrompt;
+    expect(prompt.startsWith("あなたはテスト役です\n\n")).toBe(true);
+    expect(prompt).toMatch(/すべてEnglishで書きます。[^\n]*$/);
+  });
+
+  it("元の決まりは書き換えない", () => {
+    const run = { ...RUN };
+    withLanguage(run, "日本語");
+    expect(run.systemPrompt).toBe("あなたはテスト役です");
   });
 });
 

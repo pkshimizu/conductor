@@ -118,6 +118,15 @@ describe("parseConfig", () => {
     for (const i of issues) expect(i.message).not.toBe("");
   });
 
+  it("language を書けばその言語になり、空文字は誤りにする", () => {
+    expect(parseConfig(MINIMAL + "language: English\n").language).toBe(
+      "English",
+    );
+    expect(issuesOf(MINIMAL + 'language: ""\n').map((i) => i.path)).toEqual([
+      "language",
+    ]);
+  });
+
   it("AC2: 知らない項目（書き間違い）も誤りにする", () => {
     const issues = issuesOf(MINIMAL + "poll_intervl: 60\n");
     expect(issues).toHaveLength(1);
@@ -142,6 +151,7 @@ describe("parseConfig", () => {
       reviewers: 3,
     });
     expect(c.poll_interval).toBe(90);
+    expect(c.language).toBe("日本語");
     expect(c.github.columns).toEqual({
       ready: "Ready",
       testing: "Testing",

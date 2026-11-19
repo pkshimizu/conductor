@@ -5,7 +5,7 @@ import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mergeApproved } from "./approval.js";
-import { realDeps, runRole } from "./claude.js";
+import { type ClaudeDeps, realDeps, runRole, withLanguage } from "./claude.js";
 import { loadRoleDocs, loadRoleInstructions, type Config } from "./config.js";
 import { shellExec } from "./exec.js";
 import { Git } from "./git.js";
@@ -24,6 +24,18 @@ export function storeFile(repo: string, home = homedir()): string {
   return join(home, ".conductor", "state", `${repo.replace("/", "__")}.db`);
 }
 
+/**
+ * 役を動かす関数。すべての役（テスト役・実装役・レビュー役）はこれを通るので、
+ * 言語の指示（config.language）はここで決まりの最後に足す
+ */
+export function roleRunner(
+  config: Pick<Config, "language">,
+  claude: ClaudeDeps,
+) {
+  return <T extends { systemPrompt: string }>(r: T) =>
+    runRole(withLanguage(r, config.language) as never, claude) as never;
+}
+
 export async function buildLoopDeps(
   repoDir: string,
   config: Config,
@@ -32,8 +44,7 @@ export async function buildLoopDeps(
 ): Promise<LoopDeps> {
   const github = githubFromConfig(config);
   const git = new Git(repoDir);
-  const claude = realDeps();
-  const run = <T>(r: T) => runRole(r as never, claude) as never;
+  const run = roleRunner(config, realDeps());
   const testerInstructions = await loadRoleInstructions(repoDir, "tester");
   const implementerInstructions = await loadRoleInstructions(
     repoDir,

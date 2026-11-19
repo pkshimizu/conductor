@@ -50,6 +50,24 @@ export function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
   return json;
 }
 
+/** 役が書く文章の言語の指示。決まりの最後に足す */
+export function languageRule(language: string): string {
+  return `## 出力の言語\n\nsummary・findings・questions など、結果に書く文章はすべて${language}で書きます。ファイル名・コード・コマンドは書き換えずにそのまま示します。`;
+}
+
+/** 決まりの最後に言語の指示を足す */
+export function withLanguage<R extends { systemPrompt: string }>(
+  run: R,
+  language: string,
+): R {
+  return {
+    ...run,
+    systemPrompt: [run.systemPrompt, languageRule(language)]
+      .filter(Boolean)
+      .join("\n\n"),
+  };
+}
+
 export interface RoleRun<S extends z.ZodType> {
   /** 役の名前（記録とエラー表示用） */
   role: string;
