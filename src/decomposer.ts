@@ -7,6 +7,8 @@
  * - 書式の誤り・無い key・順番の循環があれば、Issue を1件も作らずに誤りを示してやり直させる。
  *   やり直しは config.limits.rejections 回まで。それでも誤りがあれば、スレッドに理由を書いて要件を止める（blocked）
  * - 作り終えたら、Issue の一覧を作業の順番でスレッドに書く（一覧の承認は取らない）
+ * - 確かめた結果と作り終えた Issue は1件ごとに記録する。途中で失敗したら、次の確認で
+ *   分解役を起動し直さずに残りだけを作り、一覧を書く（一覧を書き終えてから workIssues を入れる）
  */
 import { z } from "zod";
 import type { Chat } from "./chat.js";
@@ -14,7 +16,12 @@ import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import type { Config } from "./config.js";
 import { checkIssueBody } from "./intake.js";
 import { SPEC_DIR } from "./specifier.js";
-import type { RequirementRecord, Store } from "./store.js";
+import type {
+  CreatedWorkIssue,
+  Decomposition,
+  RequirementRecord,
+  Store,
+} from "./store.js";
 
 const KEY_DESCRIPTION =
   "この Issue の仮の名前（dependsOn で指す。Issue 番号はまだ無い）";
@@ -328,6 +335,18 @@ export async function runDecomposer(
   }
   const name = `要件 ${requirement.messageId}`;
 
+  // 前の確認で作りかけていれば、分解役を起動し直さずに続きから作る
+  if (requirement.decomposition !== undefined) {
+    deps.log(`${name}: 作りかけの作業用 Issue の続きを作ります`);
+    await finishDecomposition(
+      deps,
+      requirement,
+      threadId,
+      requirement.decomposition,
+    );
+    return { status: "decomposed" };
+  }
+
   const changed = await board.pullRequestFiles(specPr);
   const specFiles = changed.filter((f) => f.startsWith(SPEC_DIR));
   if (specFiles.length === 0) {
@@ -367,7 +386,17 @@ export async function runDecomposer(
     const issues = result.output.issues;
     const problems = checkDecomposition(issues);
     if (problems.length === 0) {
-      await create(threadId, issues);
+      const branch = board.baseBranch ? await board.baseBranch() : "HEAD";
+      const decomposition: Decomposition = {
+        issues: workOrder(issues),
+        specLinks: specFiles.map((f) =>
+          specLink(config.github.repo, branch, f),
+        ),
+        created: [],
+      };
+      // 作り始める前に結果を残す（途中で失敗しても、分解役を起動し直さずに続きから作る）
+      await store.updateRequirement(requirement.messageId, { decomposition });
+      await finishDecomposition(deps, requirement, threadId, decomposition);
       return { status: "decomposed" };
     }
     deps.log(
@@ -389,39 +418,72 @@ export async function runDecomposer(
     deps.log(`${name}: 作業用 Issue に分けられないので止めました`);
     return { status: "blocked" };
   }
+}
 
-  async function create(
-    threadId: string,
-    issues: readonly WorkIssue[],
-  ): Promise<void> {
-    const branch = board.baseBranch ? await board.baseBranch() : "HEAD";
-    const links = specFiles.map((f) => specLink(config.github.repo, branch, f));
-    // 先に済ませる Issue から作る（本文に番号を書くため）
-    const numbers = new Map<string, number>();
-    const created: {
-      number: number;
-      title: string;
-      url: string;
-      prerequisites: number[];
-    }[] = [];
-    for (const issue of workOrder(issues)) {
-      const prerequisites = issue.dependsOn.flatMap((d) => {
-        const n = numbers.get(d);
-        return n === undefined ? [] : [n];
-      });
-      const made = await board.createIssue({
+/**
+ * 記録した分解の結果から、まだ作っていない Issue を作り、Project に追加し、一覧を書く。
+ * 1件ごとに記録を残すので、途中で失敗しても次の確認で続きからやり直せる。
+ * 一覧を書き終えてから workIssues を入れる（入っていれば分解済み）
+ */
+async function finishDecomposition(
+  deps: DecomposerDeps,
+  requirement: RequirementRecord,
+  threadId: string,
+  start: Decomposition,
+): Promise<void> {
+  const { chat, store, board } = deps;
+  const name = `要件 ${requirement.messageId}`;
+  const created: CreatedWorkIssue[] = start.created.map((c) => ({ ...c }));
+  const save = () =>
+    store.updateRequirement(requirement.messageId, {
+      decomposition: { ...start, created },
+    });
+  const numbers = new Map(created.map((c) => [c.key, c.number]));
+  const prerequisitesOf = (issue: WorkIssue) =>
+    issue.dependsOn.flatMap((d) => {
+      const n = numbers.get(d);
+      return n === undefined ? [] : [n];
+    });
+
+  // 先に済ませる Issue から作る（本文に番号を書くため）。issues は作業の順番に並べてある
+  for (const issue of start.issues) {
+    let made = created.find((c) => c.key === issue.key);
+    if (made === undefined) {
+      const result = await board.createIssue({
         title: issue.title.trim(),
-        body: workIssueBody(issue, prerequisites, links),
+        body: workIssueBody(issue, prerequisitesOf(issue), start.specLinks),
       });
-      await board.addToProject(made.number);
+      made = { key: issue.key, ...result, inProject: false };
+      created.push(made);
       numbers.set(issue.key, made.number);
-      created.push({ ...made, title: issue.title.trim(), prerequisites });
+      await save();
       deps.log(`${name}: 作業用 Issue #${made.number} を作りました`);
     }
-    await store.updateRequirement(requirement.messageId, {
-      workIssues: created.map((c) => c.number),
-    });
-    await chat.post(threadId, workIssuesMessage(created));
-    await chat.archiveThread(threadId);
+    if (!made.inProject) {
+      await board.addToProject(made.number);
+      made.inProject = true;
+      await save();
+    }
   }
+
+  const ordered = start.issues.flatMap((issue) => {
+    const c = created.find((x) => x.key === issue.key);
+    return c === undefined
+      ? []
+      : [
+          {
+            number: c.number,
+            title: issue.title.trim(),
+            url: c.url,
+            prerequisites: prerequisitesOf(issue),
+          },
+        ];
+  });
+  await chat.post(threadId, workIssuesMessage(ordered));
+  await store.updateRequirement(requirement.messageId, {
+    workIssues: ordered.map((c) => c.number),
+    decomposition: undefined,
+  });
+  // 書き込むとアーカイブが外れるので、アーカイブし直す
+  await chat.archiveThread(threadId);
 }

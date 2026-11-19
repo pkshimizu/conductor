@@ -97,13 +97,52 @@ export interface RequirementRecord {
   questions: number;
   /** 仕様の PR の番号 */
   specPr?: number;
-  /** 作業用 Issue の番号（配列の順が作業の順番） */
+  /**
+   * 作業用 Issue の番号（配列の順が作業の順番）。
+   * Issue をすべて作り、一覧をスレッドに書き終えてから入れる（入っていれば分解済み）
+   */
   workIssues: number[];
+  /** 分解の途中経過（Issue を作り始めてから、一覧を書き終えるまで） */
+  decomposition?: Decomposition;
   /** 最後に更新した時刻（ISO 8601） */
   updatedAt: string;
 }
 
-/** 書き換える項目。undefined を入れた省略できる項目（threadId・specPr）は消す */
+/** 分解役が返した作業用 Issue 1件分（decomposer.ts の WorkIssue と同じ形） */
+export interface DecompositionIssue {
+  key: string;
+  title: string;
+  purpose: string;
+  acceptance: string;
+  screens: string;
+  outOfScope: string;
+  dependsOn: string[];
+}
+
+/** 作り終えた作業用 Issue */
+export interface CreatedWorkIssue {
+  /** 分解役が付けた key */
+  key: string;
+  number: number;
+  url: string;
+  /** Project に追加し終えたか */
+  inProject: boolean;
+}
+
+/**
+ * 分解の途中経過。途中で失敗しても、再開のときに分解役を起動し直さず、
+ * 作っていない Issue だけを作れるようにする
+ */
+export interface Decomposition {
+  /** 作業の順番に並べた作業用 Issue（確かめ済み） */
+  issues: DecompositionIssue[];
+  /** 本文に付ける仕様ファイルへのリンク */
+  specLinks: string[];
+  /** 作り終えた Issue（作った順） */
+  created: CreatedWorkIssue[];
+}
+
+/** 書き換える項目。undefined を入れた省略できる項目（threadId・specPr・decomposition）は消す */
 export type RequirementUpdate = {
   [K in keyof Omit<RequirementRecord, "messageId" | "updatedAt">]?:
     RequirementRecord[K] | undefined;
@@ -167,6 +206,11 @@ export function applyRequirementUpdate(
   if (threadId !== undefined) next.threadId = threadId;
   const specPr = "specPr" in update ? update.specPr : record.specPr;
   if (specPr !== undefined) next.specPr = specPr;
+  const decomposition =
+    "decomposition" in update ? update.decomposition : record.decomposition;
+  if (decomposition !== undefined) {
+    next.decomposition = structuredClone(decomposition);
+  }
   return next;
 }
 
@@ -181,7 +225,7 @@ export function compareMessageIds(a: string, b: string): number {
 }
 
 function cloneRequirement(r: RequirementRecord): RequirementRecord {
-  return { ...r, workIssues: [...r.workIssues] };
+  return structuredClone(r);
 }
 
 export function emptyRecord(key: IssueKey, now: Date): IssueRecord {

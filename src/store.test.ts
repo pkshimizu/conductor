@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteStore } from "./sqlite-store.js";
 import { type Clock, MemoryStore, type Store } from "./store.js";
@@ -162,6 +163,42 @@ describe.each([
     expect((await store.getRequirement("10"))?.workIssues).toEqual([1, 2]);
   });
 
+  it("分解の途中経過を保存でき、undefined で消せる。取り出した記録を書き換えても変わらない", async () => {
+    const decomposition = {
+      issues: [
+        {
+          key: "a",
+          title: "A",
+          purpose: "p",
+          acceptance: "ac",
+          screens: "なし",
+          outOfScope: "なし",
+          dependsOn: [],
+        },
+      ],
+      specLinks: ["https://x/spec.md"],
+      created: [{ key: "a", number: 5, url: "https://x/5", inProject: false }],
+    };
+    await store.updateRequirement("10", { decomposition });
+    decomposition.created[0]!.inProject = true;
+    const got = await store.getRequirement("10");
+    expect(got?.decomposition?.created[0]?.inProject).toBe(false);
+    got!.decomposition!.created.push({
+      key: "b",
+      number: 6,
+      url: "u",
+      inProject: true,
+    });
+    expect((await store.getRequirement("10"))?.decomposition?.created).toEqual([
+      { key: "a", number: 5, url: "https://x/5", inProject: false },
+    ]);
+    const r = await store.updateRequirement("10", {
+      decomposition: undefined,
+    });
+    expect(r.decomposition).toBeUndefined();
+    expect("decomposition" in r).toBe(false);
+  });
+
   it("listRequirements は投稿 ID を数として古い順に並べる", async () => {
     await store.updateRequirement("100", {});
     await store.updateRequirement("99", {});
@@ -218,5 +255,45 @@ describe("SqliteStore の再起動", () => {
     expect(await second.get(KEY)).toEqual(saved);
     expect(await second.summaries(KEY)).toHaveLength(1);
     await second.close();
+  });
+
+  it("分解の途中経過の列が無い前の版のファイルでも、記録を壊さずに列を足す", async () => {
+    const file = join(dir, "old.sqlite");
+    const old = new DatabaseSync(file);
+    old.exec(`CREATE TABLE requirements (
+      message_id TEXT PRIMARY KEY,
+      thread_id TEXT,
+      state TEXT NOT NULL,
+      questions INTEGER NOT NULL DEFAULT 0,
+      spec_pr INTEGER,
+      work_issues TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    )`);
+    old
+      .prepare(
+        "INSERT INTO requirements (message_id, state, work_issues, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("10", "working", "[3]", "2026-11-15T00:00:00.000Z");
+    old.close();
+
+    const store = new SqliteStore(file);
+    expect(await store.getRequirement("10")).toEqual({
+      messageId: "10",
+      state: "working",
+      questions: 0,
+      workIssues: [3],
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    });
+    const created = [{ key: "a", number: 4, url: "u", inProject: true }];
+    await store.updateRequirement("10", {
+      decomposition: { issues: [], specLinks: [], created },
+    });
+    await store.close();
+
+    const reopened = new SqliteStore(file);
+    expect(
+      (await reopened.getRequirement("10"))?.decomposition?.created,
+    ).toEqual(created);
+    await reopened.close();
   });
 });

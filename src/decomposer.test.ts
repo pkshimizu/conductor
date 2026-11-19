@@ -152,15 +152,20 @@ describe("runDecomposer", () => {
   class Board implements DecomposerBoard {
     files = ["docs/specs/a.md", "src/x.ts"];
     readonly created: { title: string; body: string }[] = [];
+    readonly added: number[] = [];
     pullRequestFiles(): Promise<string[]> {
       return Promise.resolve(this.files);
     }
-    createIssue(input: { title: string; body: string }) {
+    createIssue(input: {
+      title: string;
+      body: string;
+    }): Promise<{ number: number; url: string }> {
       this.created.push(input);
       const number = 10 + this.created.length;
       return Promise.resolve({ number, url: `https://x/${number}` });
     }
-    addToProject(): Promise<void> {
+    addToProject(issue: number): Promise<void> {
+      this.added.push(issue);
       return Promise.resolve();
     }
     baseBranch(): Promise<string> {
@@ -240,6 +245,82 @@ describe("runDecomposer", () => {
     expect((await t.store.getRequirement("100"))?.state).toBe("blocked");
     const last = (t.chat.messages.get(t.threadId) ?? []).at(-1);
     expect(last?.text).toContain("仕様ファイル");
+  });
+
+  it("途中で Issue の作成に失敗したら、次は分解役を起動し直さず、残りだけを作る", async () => {
+    const t = await setup([[work("c", ["b"]), work("b", ["a"]), work("a")]]);
+    const create = t.board.createIssue.bind(t.board);
+    let calls = 0;
+    t.board.createIssue = (input) => {
+      calls += 1;
+      if (calls === 2) return Promise.reject(new Error("通信の失敗"));
+      return create(input);
+    };
+
+    await expect(runDecomposer(t.deps, t.record)).rejects.toThrow("通信の失敗");
+    const half = (await t.store.getRequirement("100"))!;
+    expect(half.workIssues).toEqual([]);
+    expect(half.decomposition?.created.map((c) => c.key)).toEqual(["a"]);
+
+    expect(await runDecomposer(t.deps, half)).toEqual({ status: "decomposed" });
+    expect(t.runs).toHaveLength(1);
+    expect(t.board.created.map((c) => c.title)).toEqual([
+      "a を作る",
+      "b を作る",
+      "c を作る",
+    ]);
+    // 作り直した Issue も、作り済みの番号を先に済ませる Issue に書く
+    expect(t.board.created[1]!.body).toContain("- #11");
+    expect(t.board.created[2]!.body).toContain("- #12");
+    expect(t.board.added).toEqual([11, 12, 13]);
+    const done = (await t.store.getRequirement("100"))!;
+    expect(done.workIssues).toEqual([11, 12, 13]);
+    expect(done.decomposition).toBeUndefined();
+    const lists = (t.chat.messages.get(t.threadId) ?? []).filter((m) =>
+      m.text.includes("作業用 Issue 3 件"),
+    );
+    expect(lists).toHaveLength(1);
+  });
+
+  it("Project への追加に失敗したら、次は作り直さずに追加だけをやり直す", async () => {
+    const t = await setup([[work("a")]]);
+    const add = t.board.addToProject.bind(t.board);
+    let calls = 0;
+    t.board.addToProject = (issue) => {
+      calls += 1;
+      if (calls === 1) return Promise.reject(new Error("通信の失敗"));
+      return add(issue);
+    };
+    await expect(runDecomposer(t.deps, t.record)).rejects.toThrow();
+    const half = (await t.store.getRequirement("100"))!;
+    expect(await runDecomposer(t.deps, half)).toEqual({ status: "decomposed" });
+    expect(t.board.created).toHaveLength(1);
+    expect(t.board.added).toEqual([11]);
+    expect((await t.store.getRequirement("100"))?.workIssues).toEqual([11]);
+  });
+
+  it("一覧の書き込みに失敗したら分解済みにせず、次は一覧の書き込みだけをやり直す", async () => {
+    const t = await setup([[work("a"), work("b", ["a"])]]);
+    const post = t.chat.post.bind(t.chat);
+    let fail = true;
+    t.chat.post = (channelId, text) => {
+      if (fail && text.includes("作業用 Issue 2 件")) {
+        fail = false;
+        return Promise.reject(new Error("通信の失敗"));
+      }
+      return post(channelId, text);
+    };
+    await expect(runDecomposer(t.deps, t.record)).rejects.toThrow();
+    const half = (await t.store.getRequirement("100"))!;
+    expect(half.workIssues).toEqual([]);
+
+    expect(await runDecomposer(t.deps, half)).toEqual({ status: "decomposed" });
+    expect(t.runs).toHaveLength(1);
+    expect(t.board.created).toHaveLength(2);
+    const last = (t.chat.messages.get(t.threadId) ?? []).at(-1);
+    expect(last?.text).toContain("1. #11 a を作る");
+    expect(last?.text).toContain("2. #12 b を作る");
+    expect((await t.store.getRequirement("100"))?.workIssues).toEqual([11, 12]);
   });
 
   it("上限（rejections + 1 回）までやり直し、直らなければ止める", async () => {
