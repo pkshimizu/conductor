@@ -9,7 +9,12 @@ z.config(z.locales.ja());
 export const CONDUCTOR_DIR = ".conductor";
 export const CONFIG_FILE = "config.yaml";
 
-export const ROLES = ["tester", "implementer", "reviewer"] as const;
+export const ROLES = [
+  "tester",
+  "implementer",
+  "reviewer",
+  "specifier",
+] as const;
 export type Role = (typeof ROLES)[number];
 
 const text = z.string().trim().min(1);
@@ -138,6 +143,7 @@ export const configSchema = z
         tester: roleSchema.prefault({}),
         implementer: roleSchema.prefault({}),
         reviewer: roleSchema.prefault({}),
+        specifier: roleSchema.prefault({}),
       })
       .strict()
       .prefault({}),
@@ -240,11 +246,12 @@ export const ROLE_DOC_HEADINGS: Record<Role, string> = {
   tester: "テスト観点",
   implementer: "実装ルール",
   reviewer: "レビュー観点",
+  specifier: "仕様化の決まり",
 };
 
 /**
  * .conductor/<役>/ にある .md を、ファイル名の順に読む。
- * - tester: テスト観点、implementer: 実装ルール、reviewer: レビュー観点
+ * - tester: テスト観点、implementer: 実装ルール、reviewer: レビュー観点、specifier: 仕様化の決まり
  * - フォルダが無ければ空。中身が空のファイルは除く
  */
 export async function loadRoleDocs(

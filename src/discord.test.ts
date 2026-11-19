@@ -158,6 +158,22 @@ describe("DiscordChat", () => {
     expect(calls[1]).toContain("/reactions/ok%3A55?");
   });
 
+  it("Bot 自身の ID は /users/@me から取り、一度取ったら覚える", async () => {
+    const calls: string[] = [];
+    const fetchStub: typeof fetch = async (input) => {
+      calls.push(String(input));
+      return json(200, { id: "3000" });
+    };
+    const chat = new DiscordChat({
+      token: TOKEN,
+      channels: CHANNELS,
+      fetch: fetchStub,
+    });
+    expect(await chat.selfId()).toBe("3000");
+    expect(await chat.selfId()).toBe("3000");
+    expect(calls).toEqual(["https://discord.com/api/v10/users/@me"]);
+  });
+
   it("429 のときは retry_after だけ待ってやり直す", async () => {
     let n = 0;
     const fetchStub: typeof fetch = async () => {

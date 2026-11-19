@@ -20,6 +20,8 @@ export interface ChatReaction {
 }
 
 export interface Chat {
+  /** Bot 自身のユーザー ID（Bot の書き込みを見分けるのに使う） */
+  selfId(): Promise<string>;
   /**
    * チャンネルまたはスレッドの投稿を、古い順に読む。
    * `after`（投稿 ID）を渡すと、その投稿より後の投稿だけを返す（前回の続きから読む）
@@ -93,6 +95,10 @@ export class MemoryChat implements Chat {
     if (!users.includes(userId)) users.push(userId);
     byEmoji.set(emoji, users);
     this.reactions.set(key, byEmoji);
+  }
+
+  async selfId(): Promise<string> {
+    return this.botId;
   }
 
   async readMessages(

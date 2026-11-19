@@ -229,6 +229,26 @@ describe("AC3: PR", () => {
     });
   });
 
+  it("issue を渡さなければ Closes を付けない（仕様の PR）", async () => {
+    const { gh, calls } = fakeGh((args) => {
+      if (args[1] === "repos/me/app") return ok({ default_branch: "main" });
+      if (args[1] === "repos/me/app/pulls")
+        return ok({ number: 13, html_url: "https://x/pull/13" });
+      return undefined;
+    });
+    await gh.createPullRequest({
+      head: "conductor/spec-1",
+      title: "仕様: 検索",
+      body: "要約\n",
+    });
+    expect(JSON.parse(calls[1]!.input)).toEqual({
+      title: "仕様: 検索",
+      head: "conductor/spec-1",
+      base: "main",
+      body: "要約\n",
+    });
+  });
+
   it("ブランチの開いた PR を探す", async () => {
     const { gh, calls } = fakeGh(() => ok([]));
     expect(await gh.findPullRequest("conductor/7")).toBeUndefined();

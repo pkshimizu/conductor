@@ -80,6 +80,8 @@ export class DiscordChat implements Chat {
   private readonly sleep: (ms: number) => Promise<void>;
   /** チャンネル ID → 対象（要件・質問・お知らせか、その下のスレッド）か */
   private readonly allowed = new Map<string, boolean>();
+  /** Bot 自身のユーザー ID（/users/@me）。一度取ったら覚える */
+  private self: Promise<string> | undefined;
 
   constructor(options: DiscordChatOptions) {
     this.token = options.token;
@@ -93,6 +95,19 @@ export class DiscordChat implements Chat {
     this.sleep =
       options.sleep ??
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  async selfId(): Promise<string> {
+    this.self ??= this.request("GET", "/users/@me", userSchema).then(
+      (u) => u.id,
+    );
+    try {
+      return await this.self;
+    } catch (error) {
+      // 失敗したら次にもう一度取りにいく
+      this.self = undefined;
+      throw error;
+    }
   }
 
   async readMessages(
