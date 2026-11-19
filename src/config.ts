@@ -32,6 +32,37 @@ const roleSchema = z
   })
   .strict();
 
+/** Discord などの ID（数字の並びでも文字列で書く） */
+const chatId = z.string().trim().min(1);
+
+/**
+ * 窓口（要件の受け取りと人への質問を行うチャット）の設定。
+ * トークンは書かない（環境変数 CONDUCTOR_DISCORD_TOKEN で渡す）
+ */
+export const chatSchema = z
+  .object({
+    /** チャットの種類（今は discord のみ） */
+    type: z.literal("discord"),
+    channels: z
+      .object({
+        /** 要件を受け取るチャンネル */
+        requirements: chatId,
+        /** 人に質問するチャンネル */
+        questions: chatId,
+        /** お知らせを書くチャンネル */
+        notices: chatId,
+      })
+      .strict(),
+    /** 要件や回答を受け付ける人（ユーザー ID） */
+    allowed_users: z.array(chatId).min(1),
+  })
+  .strict();
+
+export type ChatConfig = z.infer<typeof chatSchema>;
+
+/** 窓口（discord）のトークンを渡す環境変数 */
+export const DISCORD_TOKEN_ENV = "CONDUCTOR_DISCORD_TOKEN";
+
 export const configSchema = z
   .object({
     github: z
@@ -110,6 +141,8 @@ export const configSchema = z
       })
       .strict()
       .prefault({}),
+    /** 窓口のチャット。無ければ窓口を使わない */
+    chat: chatSchema.optional(),
   })
   .strict();
 
@@ -163,6 +196,19 @@ export function parseConfig(source: string, file = CONFIG_FILE): Config {
     );
   }
   return result.data;
+}
+
+/**
+ * 窓口を使う設定なのにトークンが無ければ、その旨の文を返す。問題なければ undefined。
+ * トークンの値そのものは返さない（ログに出さないため）
+ */
+export function chatTokenProblem(
+  config: Pick<Config, "chat">,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
+  if (config.chat === undefined) return undefined;
+  if (env[DISCORD_TOKEN_ENV]?.trim()) return undefined;
+  return `窓口（chat.type: ${config.chat.type}）のトークンがありません。環境変数 ${DISCORD_TOKEN_ENV} に設定してください（config.yaml には書きません）`;
 }
 
 /** 対象リポジトリの .conductor/config.yaml を読む */

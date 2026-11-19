@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { ConfigError, loadConfig } from "./config.js";
+import { chatTokenProblem, ConfigError, loadConfig } from "./config.js";
 
 export interface Output {
   out: (text: string) => void;
@@ -84,6 +84,11 @@ async function startCommand(repoDir: string, output: Output): Promise<number> {
       return 1;
     }
     throw e;
+  }
+  const tokenProblem = chatTokenProblem(config);
+  if (tokenProblem !== undefined) {
+    output.err(tokenProblem);
+    return 1;
   }
   const { start } = await import("./start.js");
   await start(repoDir, config, (text) =>

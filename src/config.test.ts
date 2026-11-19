@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  chatTokenProblem,
   ConfigError,
   loadConfig,
   formatRoleDocs,
@@ -66,6 +67,52 @@ function issuesOf(source: string) {
   }
   throw new Error("ConfigError にならなかった");
 }
+
+const CHAT = `
+chat:
+  type: discord
+  channels:
+    requirements: "11"
+    questions: "12"
+    notices: "13"
+  allowed_users: ["21"]
+`;
+
+describe("chat", () => {
+  it("書かなければ undefined", () => {
+    expect(parseConfig(MINIMAL).chat).toBeUndefined();
+  });
+
+  it("書けば型付きで得られる", () => {
+    expect(parseConfig(MINIMAL + CHAT).chat).toEqual({
+      type: "discord",
+      channels: { requirements: "11", questions: "12", notices: "13" },
+      allowed_users: ["21"],
+    });
+  });
+
+  it("discord 以外の種類・空の許可する人・token は誤り", () => {
+    const paths = (source: string) => issuesOf(source).map((i) => i.path);
+    const slack = CHAT.replace("discord", "slack");
+    expect(paths(MINIMAL + slack)).toContain("chat.type");
+    const noUsers = CHAT.replace('["21"]', "[]");
+    expect(paths(MINIMAL + noUsers)).toContain("chat.allowed_users");
+    const withToken = CHAT + "  token: secret\n";
+    expect(paths(MINIMAL + withToken)).toContain("chat");
+  });
+
+  it("chatTokenProblem: chat が無ければトークンを求めない", () => {
+    expect(chatTokenProblem(parseConfig(MINIMAL), {})).toBeUndefined();
+  });
+
+  it("chatTokenProblem: chat があればトークンを求める", () => {
+    const config = parseConfig(MINIMAL + CHAT);
+    const env = "CONDUCTOR_DISCORD_TOKEN";
+    expect(chatTokenProblem(config, {})).toContain(env);
+    expect(chatTokenProblem(config, { [env]: "  " })).toContain(env);
+    expect(chatTokenProblem(config, { [env]: "secret" })).toBeUndefined();
+  });
+});
 
 describe("parseConfig", () => {
   it("AC1: 正しい設定から全項目が型付きで得られる", () => {
