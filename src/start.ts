@@ -22,6 +22,7 @@ import { githubFromConfig } from "./github.js";
 import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
 import { checkProgress } from "./progress.js";
+import type { RespecDeps } from "./respec.js";
 import { runLoop, type LoopDeps } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
@@ -154,11 +155,27 @@ export async function buildLoopDeps(
             requirement,
           );
 
+  const respec: RespecDeps | undefined =
+    chat === undefined
+      ? undefined
+      : {
+          config,
+          repoDir,
+          chat,
+          store,
+          git,
+          board: github,
+          run,
+          instructions: specifierInstructions,
+          log,
+        };
+
   return {
     config,
     store,
     board: github,
     ...(chat === undefined ? {} : { chat }),
+    ...(respec === undefined ? {} : { respec }),
     ...(specify === undefined ? {} : { specify }),
     ...(approveSpec === undefined ? {} : { approveSpec }),
     ...(decompose === undefined ? {} : { decompose }),

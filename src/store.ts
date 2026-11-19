@@ -162,8 +162,23 @@ export interface BlockedThreadRecord extends IssueKey {
   threadId?: string;
   /** スレッドの方針を Issue に書き写したか（Ready に戻す途中で失敗しても、二重に書き写さないため） */
   copied?: true;
+  /** 方針を受けて仕様を作り直したときの記録（作り直した仕様の ✅ を待つ間） */
+  respec?: RespecProgress;
   /** 最後に更新した時刻（ISO 8601） */
   updatedAt: string;
+}
+
+/** 方針を受けて作り直した仕様（respec.ts） */
+export interface RespecProgress {
+  /** 仕様化役に渡した方針 */
+  policy: string;
+  /** 仕様化役の要約（変更点。Issue に書き写す） */
+  summary: string;
+  /** 作り直した仕様の PR */
+  pr: number;
+  url: string;
+  /** スレッドに書いた要約の投稿 ID（この投稿への ✅ を承認とする） */
+  summaryId: string;
 }
 
 /** 書き込む項目 */
@@ -172,6 +187,7 @@ export interface BlockedThreadInput {
   headId?: string;
   threadId?: string;
   copied?: true;
+  respec?: RespecProgress;
 }
 
 export interface Store {
@@ -218,6 +234,7 @@ export function blockedThreadRecord(
   if (input.headId !== undefined) r.headId = input.headId;
   if (input.threadId !== undefined) r.threadId = input.threadId;
   if (input.copied === true) r.copied = true;
+  if (input.respec !== undefined) r.respec = { ...input.respec };
   return r;
 }
 
@@ -391,7 +408,7 @@ export class MemoryStore implements Store {
 
   getBlockedThread(key: IssueKey): Promise<BlockedThreadRecord | undefined> {
     const r = this.blocked.get(this.id(key));
-    return Promise.resolve(r && { ...r });
+    return Promise.resolve(r && structuredClone(r));
   }
 
   setBlockedThread(
@@ -400,7 +417,7 @@ export class MemoryStore implements Store {
   ): Promise<BlockedThreadRecord> {
     const r = blockedThreadRecord(key, input, this.clock());
     this.blocked.set(this.id(key), r);
-    return Promise.resolve({ ...r });
+    return Promise.resolve(structuredClone(r));
   }
 
   deleteBlockedThread(key: IssueKey): Promise<void> {
@@ -413,7 +430,7 @@ export class MemoryStore implements Store {
       [...this.blocked.values()]
         .filter((r) => r.repo === repo)
         .sort((a, b) => a.issue - b.issue)
-        .map((r) => ({ ...r })),
+        .map((r) => structuredClone(r)),
     );
   }
 

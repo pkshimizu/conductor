@@ -281,6 +281,47 @@ describe("blockIssue", () => {
   });
 });
 
+describe("followBlockedThread（仕様の作り直し）", () => {
+  const progress = {
+    policy: "方針",
+    summary: "変更点",
+    pr: 301,
+    url: "https://github.com/me/app/pull/301",
+    summaryId: "m1",
+  };
+
+  it("作り直した仕様を待っている間に respec が無ければ、何もせず待つ", async () => {
+    const t = setup();
+    await t.store.setBlockedThread(KEY, {
+      reason: "壊れた",
+      threadId: "t1",
+      respec: progress,
+    });
+    const r = await followBlockedThread(t.deps, await t.record(), ISSUE);
+    expect(r.status).toBe("waiting");
+    expect(t.moves).toEqual([]);
+    expect(t.comments).toEqual([]);
+  });
+
+  it("変更点を書き写した後で失敗していたら、書き写しを繰り返さずに Ready に戻して閉じる", async () => {
+    const t = setup();
+    const head = await t.chat.post("200", "止まりました");
+    const threadId = await t.chat.createThread("200", head, "#7");
+    await t.store.setBlockedThread(KEY, {
+      reason: "壊れた",
+      threadId,
+      copied: true,
+      respec: progress,
+    });
+    const r = await followBlockedThread(t.deps, await t.record(), ISSUE);
+    expect(r.status).toBe("resumed");
+    expect(t.comments).toEqual([]);
+    expect(t.moves).toEqual([[7, "Ready"]]);
+    expect(t.chat.threads.get(threadId)?.archived).toBe(true);
+    expect(await t.store.getBlockedThread(KEY)).toBeUndefined();
+  });
+});
+
 describe("followBlockedThreads", () => {
   it("記録が無ければ列を読まない", async () => {
     const t = setup();

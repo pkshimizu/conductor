@@ -5,9 +5,18 @@
  * - 次の確認で、質問チャンネルにスレッドを作り、止まった理由と Issue へのリンクを書いて、許可した人にメンションする
  * - 許可した人がスレッドに方針を書いたら、方針を Issue にコメントで書き写し、Ready に戻し、スレッドをアーカイブする
  * - 人が GitHub で直接 Issue を Blocked の列から出したら、スレッドをアーカイブする
+ * - 仕様の作り直し（respec があり、要件の作業用 Issue のとき）: 方針を仕様化役に渡し、
+ *   仕様の変更が要らなければ上と同じく書き写す。要れば仕様の PR を作って ✅ を待ち、
+ *   ✅ が付いたらマージして変更点を Issue に書き写し、Ready に戻してスレッドをアーカイブする（respec.ts）
  */
 import type { Chat } from "./chat.js";
 import type { ChatConfig, Config } from "./config.js";
+import {
+  checkRespec,
+  respecComment,
+  type RespecDeps,
+  startRespec,
+} from "./respec.js";
 import type {
   BlockedThreadInput,
   BlockedThreadRecord,
@@ -36,14 +45,18 @@ export interface BlockedThreadDeps {
   chat: Chat;
   store: Store;
   board: BlockedThreadBoard;
+  /** 仕様の作り直し。無ければ方針をそのまま書き写す（#46 のとおり） */
+  respec?: RespecDeps;
   log(text: string): void;
 }
 
 export type BlockedThreadStatus =
   /** スレッドを作った */
   | "asked"
-  /** 人の書き込みを待っている */
+  /** 人の書き込み（または作り直した仕様への ✅）を待っている */
   | "waiting"
+  /** 仕様を作り直して仕様の PR を作った（✅ を待つ） */
+  | "respecified"
   /** 方針を書き写して Ready に戻した */
   | "resumed"
   /** Blocked の列から出ていたのでスレッドを閉じた */
@@ -217,6 +230,10 @@ export async function followBlockedThread(
   }
 
   const { threadId } = record;
+  // 仕様を作り直して ✅ を待っている
+  if (record.respec !== undefined) {
+    return followRespec(deps, record, threadId, record.respec);
+  }
   // 前の確認で方針を書き写したが、Ready に戻す途中で失敗していたら、書き写しは繰り返さない
   if (record.copied !== true) {
     // 許可した人の書き込みを読む
@@ -235,11 +252,30 @@ export async function followBlockedThread(
       if (last !== undefined) await store.setReadPosition(threadId, last.id);
       return { status: "waiting" };
     }
+    const policyText = policy.join("\n\n");
 
-    await board.comment(
-      record.issue,
-      policyComment(policy.join("\n\n"), columns.ready),
-    );
+    // 要件の作業用 Issue なら、仕様化役に仕様の変更が要るかを判断させる
+    if (deps.respec !== undefined) {
+      const started = await startRespec(deps.respec, {
+        issue: blocked,
+        reason: record.reason,
+        threadId,
+        policy: policyText,
+      });
+      if (started.status === "respecified") {
+        await store.setBlockedThread(key, {
+          ...inputOf(record),
+          respec: started.progress,
+        });
+        if (last !== undefined) await store.setReadPosition(threadId, last.id);
+        deps.log(
+          `${name}: 仕様を作り直しました。スレッドの要約への ✅ を待ちます`,
+        );
+        return { status: "respecified" };
+      }
+    }
+
+    await board.comment(record.issue, policyComment(policyText, columns.ready));
     // 書き写したことをすぐ記録する（この後で失敗しても、次の確認で同じ方針を二重に書かない）
     const copied: BlockedThreadInput = {
       reason: record.reason,
@@ -260,6 +296,62 @@ export async function followBlockedThread(
   // 記録はアーカイブの後で消す（途中で失敗しても、次の確認でやり直せるように）
   await store.deleteBlockedThread(key);
   deps.log(`${name}: スレッドの方針を書き写し、${columns.ready} に戻しました`);
+  return { status: "resumed" };
+}
+
+/** 記録を書き直すときの、今の記録の項目 */
+function inputOf(record: BlockedThreadRecord): BlockedThreadInput {
+  const input: BlockedThreadInput = { reason: record.reason };
+  if (record.headId !== undefined) input.headId = record.headId;
+  if (record.threadId !== undefined) input.threadId = record.threadId;
+  if (record.copied === true) input.copied = true;
+  if (record.respec !== undefined) input.respec = record.respec;
+  return input;
+}
+
+/**
+ * 作り直した仕様への ✅ を確かめる。承認されたら仕様の PR をマージし、
+ * 変更点を Issue に書き写し、Ready に戻し、スレッドをアーカイブする
+ */
+async function followRespec(
+  deps: BlockedThreadDeps,
+  record: BlockedThreadRecord,
+  threadId: string,
+  progress: NonNullable<BlockedThreadRecord["respec"]>,
+): Promise<{ status: BlockedThreadStatus }> {
+  const { config, chat, store, board } = deps;
+  const { columns } = config.github;
+  const key: IssueKey = { repo: record.repo, issue: record.issue };
+  const name = `#${record.issue}`;
+
+  // 前の確認で変更点を書き写したが、Ready に戻す途中で失敗していたら、書き写しは繰り返さない
+  if (record.copied !== true) {
+    if (deps.respec === undefined) return { status: "waiting" };
+    const checked = await checkRespec(deps.respec, threadId, progress);
+    if (checked.status !== "merged") {
+      if (checked.status !== "waiting") {
+        deps.log(
+          `${name}: 作り直した仕様の PR #${progress.pr}: ${checked.status}`,
+        );
+      }
+      return { status: "waiting" };
+    }
+    await board.comment(record.issue, respecComment(progress, columns.ready));
+    // 書き写したことをすぐ記録する（この後で失敗しても、次の確認で二重に書かない）
+    await store.setBlockedThread(key, { ...inputOf(record), copied: true });
+  }
+
+  await board.moveIssue(record.issue, columns.ready);
+  await chat.post(
+    threadId,
+    `仕様の PR #${progress.pr} をマージし、変更点を Issue #${record.issue} に書き写して ${columns.ready} に戻しました。このスレッドは閉じます。`,
+  );
+  await chat.archiveThread(threadId);
+  // 記録はアーカイブの後で消す（途中で失敗しても、次の確認でやり直せるように）
+  await store.deleteBlockedThread(key);
+  deps.log(
+    `${name}: 作り直した仕様をマージし、変更点を書き写して ${columns.ready} に戻しました`,
+  );
   return { status: "resumed" };
 }
 

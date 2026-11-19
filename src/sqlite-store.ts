@@ -21,6 +21,7 @@ import {
   type RequirementRecord,
   type RequirementState,
   type RequirementUpdate,
+  type RespecProgress,
   type Store,
   type Summary,
   systemClock,
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS blocked_threads (
   head_id TEXT,
   thread_id TEXT,
   copied INTEGER NOT NULL DEFAULT 0,
+  respec TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (repo, issue)
 );
@@ -82,7 +84,24 @@ interface BlockedThreadRow {
   head_id: string | null;
   thread_id: string | null;
   copied: number;
+  respec: string | null;
   updated_at: string;
+}
+
+const respecSchema = z.object({
+  policy: z.string(),
+  summary: z.string(),
+  pr: z.number(),
+  url: z.string(),
+  summaryId: z.string(),
+});
+
+function parseRespec(text: string): RespecProgress {
+  const parsed = respecSchema.safeParse(JSON.parse(text));
+  if (!parsed.success) {
+    throw new Error(`仕様の作り直しの記録が壊れています: ${text}`);
+  }
+  return parsed.data;
 }
 
 function blockedThreadFromRow(row: BlockedThreadRow): BlockedThreadRecord {
@@ -95,6 +114,7 @@ function blockedThreadFromRow(row: BlockedThreadRow): BlockedThreadRecord {
   if (row.head_id !== null) r.headId = row.head_id;
   if (row.thread_id !== null) r.threadId = row.thread_id;
   if (row.copied !== 0) r.copied = true;
+  if (row.respec !== null) r.respec = parseRespec(row.respec);
   return r;
 }
 
@@ -109,14 +129,22 @@ interface RequirementRow {
   updated_at: string;
 }
 
+/** 足す列 */
+interface AddedColumn {
+  name: string;
+  type: string;
+}
+
 /** 前の版で作ったファイルに無い列を足す（既存の記録は壊さない） */
 const ADDED_REQUIREMENT_COLUMNS: readonly { name: string; type: string }[] = [
   { name: "decomposition", type: "TEXT" },
 ];
 
 /** 前の版で作った blocked_threads に無い列を足す */
-const ADDED_BLOCKED_THREAD_COLUMNS: readonly { name: string; type: string }[] =
-  [{ name: "head_id", type: "TEXT" }];
+const ADDED_BLOCKED_THREAD_COLUMNS: readonly AddedColumn[] = [
+  { name: "head_id", type: "TEXT" },
+  { name: "respec", type: "TEXT" },
+];
 
 const decompositionSchema = z.object({
   issues: z.array(
@@ -401,13 +429,14 @@ export class SqliteStore implements Store {
     const r = blockedThreadRecord(key, input, this.clock());
     this.db
       .prepare(
-        `INSERT INTO blocked_threads (repo, issue, reason, head_id, thread_id, copied, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO blocked_threads (repo, issue, reason, head_id, thread_id, copied, respec, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, issue) DO UPDATE SET
            reason = excluded.reason,
            head_id = excluded.head_id,
            thread_id = excluded.thread_id,
            copied = excluded.copied,
+           respec = excluded.respec,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -417,9 +446,10 @@ export class SqliteStore implements Store {
         r.headId ?? null,
         r.threadId ?? null,
         r.copied === true ? 1 : 0,
+        r.respec === undefined ? null : JSON.stringify(r.respec),
         r.updatedAt,
       );
-    return Promise.resolve({ ...r });
+    return Promise.resolve(structuredClone(r));
   }
 
   deleteBlockedThread(key: IssueKey): Promise<void> {

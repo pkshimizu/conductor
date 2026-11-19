@@ -11,6 +11,7 @@ import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
 import { pendingFindings } from "./rejection.js";
 import { receiveRequirements } from "./requirements.js";
+import type { RespecDeps } from "./respec.js";
 import type {
   IssueKey,
   IssueRecord,
@@ -75,6 +76,8 @@ export interface LoopDeps {
   decompose?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 分解済みの要件1件の作業用 Issue を確かめ、着手できる Issue を Ready に移し、すべてマージされたら完了を知らせる。窓口があるときに start.ts がつなぐ。無ければ確かめない */
   progress?: (requirement: RequirementRecord) => Promise<StepResult>;
+  /** 仕様の作り直し。要件の作業用 Issue が止まり、スレッドに方針が書かれたら仕様化役に判断させる。窓口があるときに start.ts がつなぐ。無ければ方針をそのまま書き写す */
+  respec?: RespecDeps;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -122,6 +125,7 @@ async function blockedThreads(deps: LoopDeps): Promise<void> {
         chat,
         store: deps.store,
         board: deps.board,
+        ...(deps.respec === undefined ? {} : { respec: deps.respec }),
         log: deps.log,
       },
       async () => (await deps.board.issuesByColumn()).get(blocked) ?? [],
