@@ -20,8 +20,11 @@ export interface ChatReaction {
 }
 
 export interface Chat {
-  /** チャンネルまたはスレッドの投稿を、古い順に読む */
-  readMessages(channelId: string): Promise<ChatMessage[]>;
+  /**
+   * チャンネルまたはスレッドの投稿を、古い順に読む。
+   * `after`（投稿 ID）を渡すと、その投稿より後の投稿だけを返す（前回の続きから読む）
+   */
+  readMessages(channelId: string, after?: string): Promise<ChatMessage[]>;
   /** 投稿からスレッドを作り、スレッドの ID を返す */
   createThread(
     channelId: string,
@@ -92,9 +95,15 @@ export class MemoryChat implements Chat {
     this.reactions.set(key, byEmoji);
   }
 
-  async readMessages(channelId: string): Promise<ChatMessage[]> {
+  async readMessages(
+    channelId: string,
+    after?: string,
+  ): Promise<ChatMessage[]> {
     const list = this.messages.get(channelId) ?? [];
-    return list.map((m) => ({ ...m }));
+    // ID は作った順に大きくなる（Discord の投稿 ID と同じ）ので、大小で比べる
+    return list
+      .filter((m) => after === undefined || BigInt(m.id) > BigInt(after))
+      .map((m) => ({ ...m }));
   }
 
   async createThread(

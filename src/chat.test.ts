@@ -14,6 +14,18 @@ describe("MemoryChat", () => {
     expect(await chat.readMessages("none")).toEqual([]);
   });
 
+  it("after を渡すと、その投稿より後の投稿だけが古い順に読める", async () => {
+    const chat = new MemoryChat();
+    const first = await chat.post("c", "1つ目");
+    const second = await chat.post("c", "2つ目");
+    const third = await chat.post("c", "3つ目");
+    expect((await chat.readMessages("c", first)).map((m) => m.id)).toEqual([
+      second,
+      third,
+    ]);
+    expect(await chat.readMessages("c", third)).toEqual([]);
+  });
+
   it("リアクションは絵文字ごとにまとまり、同じ人は重ならない", async () => {
     const chat = new MemoryChat();
     const m = chat.addMessage("c", { authorId: "u1", text: "x" });
