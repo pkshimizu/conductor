@@ -258,6 +258,63 @@ describe("AC3: PR", () => {
   });
 });
 
+describe("分解役に使う API", () => {
+  it("PR で変えたファイルを全ページ取る", async () => {
+    const { gh, calls } = fakeGh((args) => {
+      const page = /page=(\d+)$/.exec(args[1] ?? "")?.[1];
+      if (page === "1")
+        return ok(
+          Array.from({ length: 100 }, (_, i) => ({ filename: `f${i}` })),
+        );
+      if (page === "2") return ok([{ filename: "docs/specs/a.md" }]);
+      return undefined;
+    });
+    const files = await gh.pullRequestFiles(5);
+    expect(files).toHaveLength(101);
+    expect(files.at(-1)).toBe("docs/specs/a.md");
+    expect(calls[0]!.args[1]).toBe(
+      "repos/me/app/pulls/5/files?per_page=100&page=1",
+    );
+  });
+
+  it("Issue を作る", async () => {
+    const { gh, calls } = fakeGh((args) => {
+      if (args[1] === "repos/me/app/issues")
+        return ok({ number: 21, html_url: "https://x/issues/21" });
+      return undefined;
+    });
+    expect(await gh.createIssue({ title: "T", body: "B" })).toEqual({
+      number: 21,
+      url: "https://x/issues/21",
+    });
+    expect(JSON.parse(calls[0]!.input)).toEqual({ title: "T", body: "B" });
+  });
+
+  it("Project に追加するだけで、列は動かさない", async () => {
+    const { gh, calls } = fakeGh((_, input) => {
+      const { query: q } = query(input);
+      if (q.includes("projectV2(number")) return ok({ data: META });
+      if (q.includes("projectItems"))
+        return ok({
+          data: {
+            repository: { issue: { id: "I7", projectItems: { nodes: [] } } },
+          },
+        });
+      if (q.includes("addProjectV2ItemById"))
+        return ok({ data: { addProjectV2ItemById: { item: { id: "n" } } } });
+      return undefined;
+    });
+    await gh.addToProject(7);
+    expect(query(calls.at(-1)!.input).variables).toEqual({
+      project: "P1",
+      content: "I7",
+    });
+    expect(
+      calls.some((c) => c.input.includes("updateProjectV2ItemFieldValue")),
+    ).toBe(false);
+  });
+});
+
 describe("AC4: CI", () => {
   const checks = (...buckets: string[]) =>
     buckets.map((bucket, i) => ({

@@ -1,12 +1,14 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import {
   applyRequirementUpdate,
   applyUpdate,
   type Checkpoint,
   type Clock,
   compareMessageIds,
+  type Decomposition,
   emptyRecord,
   emptyRequirement,
   type IssueKey,
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS requirements (
   questions INTEGER NOT NULL DEFAULT 0,
   spec_pr INTEGER,
   work_issues TEXT NOT NULL DEFAULT '[]',
+  decomposition TEXT,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS read_positions (
@@ -66,7 +69,44 @@ interface RequirementRow {
   questions: number;
   spec_pr: number | null;
   work_issues: string;
+  decomposition: string | null;
   updated_at: string;
+}
+
+/** 前の版で作ったファイルに無い列を足す（既存の記録は壊さない） */
+const ADDED_REQUIREMENT_COLUMNS: readonly { name: string; type: string }[] = [
+  { name: "decomposition", type: "TEXT" },
+];
+
+const decompositionSchema = z.object({
+  issues: z.array(
+    z.object({
+      key: z.string(),
+      title: z.string(),
+      purpose: z.string(),
+      acceptance: z.string(),
+      screens: z.string(),
+      outOfScope: z.string(),
+      dependsOn: z.array(z.string()),
+    }),
+  ),
+  specLinks: z.array(z.string()),
+  created: z.array(
+    z.object({
+      key: z.string(),
+      number: z.number(),
+      url: z.string(),
+      inProject: z.boolean(),
+    }),
+  ),
+});
+
+function parseDecomposition(text: string): Decomposition {
+  const parsed = decompositionSchema.safeParse(JSON.parse(text));
+  if (!parsed.success) {
+    throw new Error(`分解の途中経過の記録が壊れています: ${text}`);
+  }
+  return parsed.data;
 }
 
 function isRequirementState(s: string): s is RequirementState {
@@ -102,6 +142,9 @@ function requirementFromRow(row: RequirementRow): RequirementRecord {
   };
   if (row.thread_id !== null) r.threadId = row.thread_id;
   if (row.spec_pr !== null) r.specPr = row.spec_pr;
+  if (row.decomposition !== null) {
+    r.decomposition = parseDecomposition(row.decomposition);
+  }
   return r;
 }
 
@@ -145,6 +188,19 @@ export class SqliteStore implements Store {
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec(SCHEMA);
+    this.addMissingColumns();
+  }
+
+  private addMissingColumns(): void {
+    const columns = this.db
+      .prepare("PRAGMA table_info(requirements)")
+      .all() as unknown as { name: string }[];
+    const names = new Set(columns.map((c) => c.name));
+    for (const c of ADDED_REQUIREMENT_COLUMNS) {
+      if (!names.has(c.name)) {
+        this.db.exec(`ALTER TABLE requirements ADD COLUMN ${c.name} ${c.type}`);
+      }
+    }
   }
 
   get(key: IssueKey): Promise<IssueRecord | undefined> {
@@ -231,14 +287,15 @@ export class SqliteStore implements Store {
     this.db
       .prepare(
         `INSERT INTO requirements
-           (message_id, thread_id, state, questions, spec_pr, work_issues, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+           (message_id, thread_id, state, questions, spec_pr, work_issues, decomposition, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (message_id) DO UPDATE SET
            thread_id = excluded.thread_id,
            state = excluded.state,
            questions = excluded.questions,
            spec_pr = excluded.spec_pr,
            work_issues = excluded.work_issues,
+           decomposition = excluded.decomposition,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -248,9 +305,10 @@ export class SqliteStore implements Store {
         next.questions,
         next.specPr ?? null,
         JSON.stringify(next.workIssues),
+        next.decomposition ? JSON.stringify(next.decomposition) : null,
         next.updatedAt,
       );
-    return { ...next, workIssues: [...next.workIssues] };
+    return structuredClone(next);
   }
 
   listRequirements(): Promise<RequirementRecord[]> {

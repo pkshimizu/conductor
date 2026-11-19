@@ -69,6 +69,8 @@ interface ProjectMeta {
 
 /** ログの要点として残す行数 */
 const LOG_TAIL_LINES = 60;
+/** REST API の1ページの件数 */
+const PAGE_SIZE = 100;
 
 export class GitHub {
   readonly repo: string;
@@ -203,6 +205,41 @@ export class GitHub {
     );
     const pr = list[0];
     return pr && { number: pr.number, url: pr.html_url };
+  }
+
+  /** PR で変えたファイルのパス（全ページ） */
+  async pullRequestFiles(pr: number): Promise<string[]> {
+    const files: string[] = [];
+    for (let page = 1; ; page++) {
+      const list = await this.rest<{ filename: string }[]>(
+        "GET",
+        `repos/${this.repo}/pulls/${pr}/files?per_page=${PAGE_SIZE}&page=${page}`,
+      );
+      files.push(...list.map((f) => f.filename));
+      if (list.length < PAGE_SIZE) break;
+    }
+    return files;
+  }
+
+  // ---- 分解役（decomposer.ts） ----
+
+  /** Issue を作る */
+  async createIssue(input: {
+    title: string;
+    body: string;
+  }): Promise<{ number: number; url: string }> {
+    const issue = await this.rest<{ number: number; html_url: string }>(
+      "POST",
+      `repos/${this.repo}/issues`,
+      { title: input.title, body: input.body },
+    );
+    return { number: issue.number, url: issue.html_url };
+  }
+
+  /** Issue を Projects に追加する（列は動かさない）。追加済みなら何もしない */
+  async addToProject(issue: number): Promise<void> {
+    const { projectId } = await this.loadMeta();
+    await this.ensureItem(issue, projectId);
   }
 
   // ---- AC4: CI ----

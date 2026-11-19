@@ -175,6 +175,67 @@ describe("tick の仕様の承認", () => {
   });
 });
 
+describe("tick の分解", () => {
+  it("スレッドがあり作業中で作業用 Issue が無い要件だけに decompose を呼び、失敗しても Issue の処理は止めない", async () => {
+    const t = setup({ Ready: [3] });
+    await t.store.updateRequirement("10", {
+      threadId: "t10",
+      state: "working",
+    });
+    await t.store.updateRequirement("11", {
+      threadId: "t11",
+      state: "working",
+      workIssues: [5],
+    });
+    await t.store.updateRequirement("12", { state: "working" });
+    await t.store.updateRequirement("13", {
+      threadId: "t13",
+      state: "blocked",
+    });
+    await t.store.updateRequirement("14", {
+      threadId: "t14",
+      state: "working",
+    });
+    const seen: string[] = [];
+    const deps: LoopDeps = {
+      ...t.deps,
+      decompose: (r) => {
+        seen.push(r.messageId);
+        return r.messageId === "10"
+          ? Promise.reject(new Error("PR を読めない"))
+          : Promise.resolve({ status: "decomposed" });
+      },
+    };
+    await tick(deps, newLoopState());
+    expect(seen).toEqual(["10", "14"]);
+    expect(t.calls).toEqual(["pickUp #3", "test #3"]);
+    expect(t.logs.some((l) => l.includes("PR を読めない"))).toBe(true);
+  });
+
+  it("仕様の承認で作業中になった要件を、同じ確認で分解する", async () => {
+    const t = setup({});
+    await t.store.updateRequirement("10", {
+      threadId: "t10",
+      state: "awaiting_approval",
+      specPr: 1,
+    });
+    const seen: string[] = [];
+    const deps: LoopDeps = {
+      ...t.deps,
+      approveSpec: async (r) => {
+        await t.store.updateRequirement(r.messageId, { state: "working" });
+        return { status: "approved" };
+      },
+      decompose: (r) => {
+        seen.push(`${r.messageId} ${r.state}`);
+        return Promise.resolve({ status: "decomposed" });
+      },
+    };
+    await tick(deps, newLoopState());
+    expect(seen).toEqual(["10 working"]);
+  });
+});
+
 describe("tick", () => {
   it("作業中の Issue が無ければ、Ready の番号が小さいものを1件拾って進める", async () => {
     const t = setup({ Ready: [5, 3] });

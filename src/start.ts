@@ -14,6 +14,7 @@ import {
   loadRoleDocs,
   loadRoleInstructions,
 } from "./config.js";
+import { runDecomposer } from "./decomposer.js";
 import { DiscordChat } from "./discord.js";
 import { shellExec } from "./exec.js";
 import { Git } from "./git.js";
@@ -122,6 +123,27 @@ export async function buildLoopDeps(
             { config, chat, store, board: github, log },
             requirement,
           );
+  const decomposerInstructions = await loadRoleInstructions(
+    repoDir,
+    "decomposer",
+  );
+  const decompose =
+    chat === undefined
+      ? undefined
+      : (requirement: RequirementRecord) =>
+          runDecomposer(
+            {
+              config,
+              repoDir,
+              chat,
+              store,
+              board: github,
+              run,
+              instructions: decomposerInstructions,
+              log,
+            },
+            requirement,
+          );
 
   return {
     config,
@@ -130,6 +152,7 @@ export async function buildLoopDeps(
     ...(chat === undefined ? {} : { chat }),
     ...(specify === undefined ? {} : { specify }),
     ...(approveSpec === undefined ? {} : { approveSpec }),
+    ...(decompose === undefined ? {} : { decompose }),
     log,
     pickUp: (issue) => pickUp(github, issue, config.github.columns),
     test: (issue) =>

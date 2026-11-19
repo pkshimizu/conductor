@@ -70,6 +70,8 @@ export interface LoopDeps {
   specify?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 承認待ちの要件1件の承認（要約への ✅）を1回分確かめる。窓口があるときに start.ts がつなぐ。無ければ承認を確かめない */
   approveSpec?: (requirement: RequirementRecord) => Promise<StepResult>;
+  /** 分解に進めた要件1件を作業用 Issue に分ける。窓口があるときに start.ts がつなぐ。無ければ分解しない */
+  decompose?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -279,12 +281,47 @@ async function approveSpecs(deps: LoopDeps): Promise<void> {
   }
 }
 
-/** 1回分の確認。要件の受け取り・仕様化・仕様の承認と、作業中の Issue の処理を行う */
+/**
+ * スレッドがあり作業中で、作業用 Issue がまだ無い要件を分解する（decompose があるときだけ）。
+ * 承認した直後の要件も拾うよう、仕様の承認の後に一覧を読み直す。
+ * 失敗しても Issue の処理は止めない（次の確認でやり直す）
+ */
+async function decomposeRequirements(deps: LoopDeps): Promise<void> {
+  const { decompose } = deps;
+  if (decompose === undefined) return;
+  let requirements: RequirementRecord[];
+  try {
+    requirements = await deps.store.listRequirements();
+  } catch (e) {
+    deps.log(`要件の一覧を読めませんでした: ${errorMessage(e)}`);
+    return;
+  }
+  for (const r of requirements) {
+    if (
+      r.threadId === undefined ||
+      r.state !== "working" ||
+      r.workIssues.length > 0
+    ) {
+      continue;
+    }
+    try {
+      const result = await decompose(r);
+      deps.log(`要件 ${r.messageId}: ${result.status}`);
+    } catch (e) {
+      deps.log(
+        `要件 ${r.messageId} の分解に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
+      );
+    }
+  }
+}
+
+/** 1回分の確認。要件の受け取り・仕様化・仕様の承認・分解と、作業中の Issue の処理を行う */
 export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   const { config, store, board } = deps;
   await intakeRequirements(deps);
   await specifyRequirements(deps);
   await approveSpecs(deps);
+  await decomposeRequirements(deps);
   const { columns, repo } = config.github;
   const byColumn = await board.issuesByColumn();
   const inColumn = (column: string) =>
