@@ -249,6 +249,14 @@ describe.each([
       copied: true,
     });
     expect((await store.getBlockedThread(KEY))?.copied).toBe(true);
+    expect((await store.getBlockedThread(KEY))?.headId).toBeUndefined();
+    await store.setBlockedThread(KEY, { reason: "壊れた", headId: "h1" });
+    expect(await store.getBlockedThread(KEY)).toEqual({
+      ...KEY,
+      reason: "壊れた",
+      headId: "h1",
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    });
     await store.deleteBlockedThread(KEY);
     expect(await store.getBlockedThread(KEY)).toBeUndefined();
     expect(await store.listBlockedThreads(KEY.repo)).toHaveLength(1);
@@ -322,6 +330,39 @@ describe("SqliteStore の再起動", () => {
     expect(
       (await reopened.getRequirement("10"))?.decomposition?.created,
     ).toEqual(created);
+    await reopened.close();
+  });
+
+  it("もとの投稿の列が無い前の版の blocked_threads でも、記録を壊さずに列を足す", async () => {
+    const file = join(dir, "old-blocked.sqlite");
+    const old = new DatabaseSync(file);
+    old.exec(`CREATE TABLE blocked_threads (
+      repo TEXT NOT NULL,
+      issue INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      thread_id TEXT,
+      copied INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (repo, issue)
+    )`);
+    old
+      .prepare(
+        "INSERT INTO blocked_threads (repo, issue, reason, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(KEY.repo, KEY.issue, "壊れた", "2026-11-15T00:00:00.000Z");
+    old.close();
+
+    const store = new SqliteStore(file);
+    expect(await store.getBlockedThread(KEY)).toEqual({
+      ...KEY,
+      reason: "壊れた",
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    });
+    await store.setBlockedThread(KEY, { reason: "壊れた", headId: "h1" });
+    await store.close();
+
+    const reopened = new SqliteStore(file);
+    expect((await reopened.getBlockedThread(KEY))?.headId).toBe("h1");
     await reopened.close();
   });
 });

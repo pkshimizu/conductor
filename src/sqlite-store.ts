@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS blocked_threads (
   repo TEXT NOT NULL,
   issue INTEGER NOT NULL,
   reason TEXT NOT NULL,
+  head_id TEXT,
   thread_id TEXT,
   copied INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
@@ -78,6 +79,7 @@ interface BlockedThreadRow {
   repo: string;
   issue: number;
   reason: string;
+  head_id: string | null;
   thread_id: string | null;
   copied: number;
   updated_at: string;
@@ -90,6 +92,7 @@ function blockedThreadFromRow(row: BlockedThreadRow): BlockedThreadRecord {
     reason: row.reason,
     updatedAt: row.updated_at,
   };
+  if (row.head_id !== null) r.headId = row.head_id;
   if (row.thread_id !== null) r.threadId = row.thread_id;
   if (row.copied !== 0) r.copied = true;
   return r;
@@ -110,6 +113,10 @@ interface RequirementRow {
 const ADDED_REQUIREMENT_COLUMNS: readonly { name: string; type: string }[] = [
   { name: "decomposition", type: "TEXT" },
 ];
+
+/** 前の版で作った blocked_threads に無い列を足す */
+const ADDED_BLOCKED_THREAD_COLUMNS: readonly { name: string; type: string }[] =
+  [{ name: "head_id", type: "TEXT" }];
 
 const decompositionSchema = z.object({
   issues: z.array(
@@ -225,13 +232,21 @@ export class SqliteStore implements Store {
   }
 
   private addMissingColumns(): void {
+    this.addColumns("requirements", ADDED_REQUIREMENT_COLUMNS);
+    this.addColumns("blocked_threads", ADDED_BLOCKED_THREAD_COLUMNS);
+  }
+
+  private addColumns(
+    table: string,
+    added: readonly { name: string; type: string }[],
+  ): void {
     const columns = this.db
-      .prepare("PRAGMA table_info(requirements)")
+      .prepare(`PRAGMA table_info(${table})`)
       .all() as unknown as { name: string }[];
     const names = new Set(columns.map((c) => c.name));
-    for (const c of ADDED_REQUIREMENT_COLUMNS) {
+    for (const c of added) {
       if (!names.has(c.name)) {
-        this.db.exec(`ALTER TABLE requirements ADD COLUMN ${c.name} ${c.type}`);
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${c.name} ${c.type}`);
       }
     }
   }
@@ -386,10 +401,11 @@ export class SqliteStore implements Store {
     const r = blockedThreadRecord(key, input, this.clock());
     this.db
       .prepare(
-        `INSERT INTO blocked_threads (repo, issue, reason, thread_id, copied, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO blocked_threads (repo, issue, reason, head_id, thread_id, copied, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, issue) DO UPDATE SET
            reason = excluded.reason,
+           head_id = excluded.head_id,
            thread_id = excluded.thread_id,
            copied = excluded.copied,
            updated_at = excluded.updated_at`,
@@ -398,6 +414,7 @@ export class SqliteStore implements Store {
         r.repo,
         r.issue,
         r.reason,
+        r.headId ?? null,
         r.threadId ?? null,
         r.copied === true ? 1 : 0,
         r.updatedAt,

@@ -156,6 +156,8 @@ export type RequirementUpdate = {
 export interface BlockedThreadRecord extends IssueKey {
   /** 止まった理由（最後のエラー） */
   reason: string;
+  /** 質問チャンネルに書いた、スレッドのもとの投稿。まだ書いていなければ undefined（スレッドを作る途中で失敗しても、投稿を重ねないため） */
+  headId?: string;
   /** 質問チャンネルに作ったスレッド。まだ作っていなければ undefined */
   threadId?: string;
   /** スレッドの方針を Issue に書き写したか（Ready に戻す途中で失敗しても、二重に書き写さないため） */
@@ -167,6 +169,7 @@ export interface BlockedThreadRecord extends IssueKey {
 /** 書き込む項目 */
 export interface BlockedThreadInput {
   reason: string;
+  headId?: string;
   threadId?: string;
   copied?: true;
 }
@@ -212,6 +215,7 @@ export function blockedThreadRecord(
     reason: input.reason,
     updatedAt: now.toISOString(),
   };
+  if (input.headId !== undefined) r.headId = input.headId;
   if (input.threadId !== undefined) r.threadId = input.threadId;
   if (input.copied === true) r.copied = true;
   return r;

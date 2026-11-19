@@ -141,6 +141,32 @@ describe("followBlockedThread", () => {
 });
 
 describe("followBlockedThread の途中の失敗", () => {
+  it("createThread が1回失敗しても、次の確認で投稿を重ねずにスレッドを作る", async () => {
+    const t = setup();
+    await noteBlocked(t.store, KEY, "壊れた");
+    const create = t.chat.createThread.bind(t.chat);
+    let fails = 1;
+    t.chat.createThread = (channelId, messageId, name) => {
+      if (fails-- > 0) return Promise.reject(new Error("権限が無い"));
+      return create(channelId, messageId, name);
+    };
+    await expect(
+      followBlockedThread(t.deps, await t.record(), ISSUE),
+    ).rejects.toThrow("権限が無い");
+    const head = t.chat.messages.get("200")?.[0]?.id;
+    expect((await t.record()).headId).toBe(head);
+    expect((await t.record()).threadId).toBeUndefined();
+
+    const r = await followBlockedThread(t.deps, await t.record(), ISSUE);
+    expect(r.status).toBe("asked");
+    // 質問チャンネルへの知らせ（メンション付き）は1回だけ
+    expect(t.chat.messages.get("200")).toHaveLength(1);
+    const threads = [...t.chat.threads.entries()];
+    expect(threads).toHaveLength(1);
+    expect((await t.record()).threadId).toBe(threads[0]?.[0]);
+    expect((await t.record()).headId).toBe(head);
+  });
+
   /** スレッドを作り、許可した人が方針を書いたところまで進める */
   async function withPolicy() {
     const t = setup();

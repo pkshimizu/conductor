@@ -8,7 +8,12 @@
  */
 import type { Chat } from "./chat.js";
 import type { ChatConfig, Config } from "./config.js";
-import type { BlockedThreadRecord, IssueKey, Store } from "./store.js";
+import type {
+  BlockedThreadInput,
+  BlockedThreadRecord,
+  IssueKey,
+  Store,
+} from "./store.js";
 
 /** Blocked の列にある Issue（番号と題名） */
 export interface BlockedIssue {
@@ -104,13 +109,11 @@ export async function noteBlocked(
   await store.setBlockedThread(key, { reason });
 }
 
-/** Blocked にするときに使う GitHub の操作 */
-export type BlockBoard = BlockedThreadBoard;
-
 export interface BlockDeps {
   config: Config;
   store: Store;
-  board: BlockBoard;
+  /** Blocked にするときに使う GitHub の操作 */
+  board: BlockedThreadBoard;
 }
 
 /** 窓口があるときに、Blocked にしたことのコメントの最後に足す案内 */
@@ -181,22 +184,34 @@ export async function followBlockedThread(
   // まだスレッドが無い
   if (record.threadId === undefined) {
     const questions = chatConfig.channels.questions;
-    const head = await chat.post(
-      questions,
-      blockedMessage({
-        repo: record.repo,
-        issue: blocked,
+    // 前の確認でもとの投稿を書いていたら、書き直さずにスレッドを作るところから続ける（メンションを重ねない）
+    let head = record.headId;
+    if (head === undefined) {
+      head = await chat.post(
+        questions,
+        blockedMessage({
+          repo: record.repo,
+          issue: blocked,
+          reason: record.reason,
+          allowedUsers: chatConfig.allowed_users,
+          ready: columns.ready,
+        }),
+      );
+      await store.setBlockedThread(key, {
         reason: record.reason,
-        allowedUsers: chatConfig.allowed_users,
-        ready: columns.ready,
-      }),
-    );
+        headId: head,
+      });
+    }
     const threadId = await chat.createThread(
       questions,
       head,
       blockedThreadName(blocked),
     );
-    await store.setBlockedThread(key, { reason: record.reason, threadId });
+    await store.setBlockedThread(key, {
+      reason: record.reason,
+      headId: head,
+      threadId,
+    });
     deps.log(`${name}: 質問チャンネルにスレッドを作りました`);
     return { status: "asked" };
   }
@@ -226,11 +241,13 @@ export async function followBlockedThread(
       policyComment(policy.join("\n\n"), columns.ready),
     );
     // 書き写したことをすぐ記録する（この後で失敗しても、次の確認で同じ方針を二重に書かない）
-    await store.setBlockedThread(key, {
+    const copied: BlockedThreadInput = {
       reason: record.reason,
       threadId,
       copied: true,
-    });
+    };
+    if (record.headId !== undefined) copied.headId = record.headId;
+    await store.setBlockedThread(key, copied);
     if (last !== undefined) await store.setReadPosition(threadId, last.id);
   }
 
