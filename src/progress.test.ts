@@ -84,6 +84,14 @@ describe("prerequisitesOf", () => {
     expect(prerequisitesOf(body([]))).toEqual([]);
     expect(prerequisitesOf("本文だけ #5")).toEqual([]);
   });
+
+  it("Issue フォームの「### 見出し」（行末の # 付きも）でも読む", () => {
+    expect(
+      prerequisitesOf(
+        "### 目的\n#9 を参照\n\n### 先に済ませる Issue ###\n- #7\r\n- #8\n\n### 対象外\n#10",
+      ),
+    ).toEqual([7, 8]);
+  });
 });
 
 describe("completedMessage", () => {

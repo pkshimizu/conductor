@@ -15,6 +15,7 @@ import type { Chat } from "./chat.js";
 import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import type { Config } from "./config.js";
 import { checkIssueBody } from "./intake.js";
+import { requirementText } from "./requirement-text.js";
 import { SPEC_DIR } from "./specifier.js";
 import type {
   CreatedWorkIssue,
@@ -104,8 +105,8 @@ export function decomposerAllow(config: Config): string[] {
   return [...BASE_ALLOW, ...config.roles.decomposer.allow];
 }
 
-/** Issue の本文の見出し（intake.ts の REQUIRED_SECTIONS と同じ名前） */
-const SECTION = {
+/** Issue の本文の見出し（intake.ts の REQUIRED_SECTIONS と同じ名前。progress.ts も使う） */
+export const SECTION = {
   purpose: "目的",
   acceptance: "受け入れ条件（AC）",
   screens: "画面の URL・文言",
@@ -309,14 +310,6 @@ export function blockedMessage(
   ].join("\n");
 }
 
-/** 引用の形（"> "）を外す */
-function unquote(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .map((l) => l.replace(/^> ?/, ""))
-    .join("\n");
-}
-
 /** 分解に進めた要件1件を分解する（作業用 Issue を作り終えていれば何もしない） */
 export async function runDecomposer(
   deps: DecomposerDeps,
@@ -356,10 +349,7 @@ export async function runDecomposer(
   }
 
   // 要件の本文は、スレッドの Bot の最初の書き込み（受け取りのときに書いた引用）
-  const botId = await chat.selfId();
-  const thread = await chat.readMessages(threadId);
-  const quoted = thread.find((m) => m.authorId === botId);
-  const requirementText = quoted && unquote(quoted.text);
+  const quotedText = await requirementText(chat, threadId);
 
   const attempts = config.limits.rejections + 1;
   let retry: { issues: WorkIssue[]; problems: string[] } | undefined;
@@ -371,9 +361,7 @@ export async function runDecomposer(
         .filter(Boolean)
         .join("\n\n"),
       prompt: decomposerPrompt({
-        ...(requirementText === undefined
-          ? {}
-          : { requirement: requirementText }),
+        ...(quotedText === undefined ? {} : { requirement: quotedText }),
         specPr,
         specFiles,
         ...(retry === undefined ? {} : { retry }),

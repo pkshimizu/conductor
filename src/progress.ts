@@ -1,6 +1,6 @@
 /**
  * 着手と完了の知らせ。分解した要件の作業用 Issue を、確認のたびに1回分確かめる。
- * - 先に済ませる Issue（本文の「## 先に済ませる Issue」の #番号）がすべてマージされた Issue を Ready に移す
+ * - 先に済ませる Issue（本文の「先に済ませる Issue」の節の #番号）がすべてマージされた Issue を Ready に移す
  * - 移すのは列が未設定（Project に追加しただけ）の Issue だけ。Ready・作業中・Done・Blocked の Issue は動かさない
  * - 要件の作業用 Issue がすべてマージされたら、お知らせチャンネルに要件の完了（要約とマージした PR の一覧）を書き、
  *   要件を完了（done）にする
@@ -8,6 +8,9 @@
  */
 import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
+import { SECTION } from "./decomposer.js";
+import { parseSections } from "./intake.js";
+import { requirementText } from "./requirement-text.js";
 import type { RequirementRecord, Store } from "./store.js";
 
 /** 作業用 Issue 1件の今の様子 */
@@ -43,24 +46,16 @@ export type ProgressStatus =
   /** すべてマージされたので要件を完了にした */
   | "done";
 
-/** 作業用 Issue の本文の、先に済ませる Issue の見出し（decomposer.ts と同じ名前） */
-const PREREQUISITES_HEADING = "先に済ませる Issue";
-
-/** 本文の「## 先に済ませる Issue」に #番号 で書いた Issue（重なりは除く） */
+/**
+ * 本文の「先に済ませる Issue」の節（`##` でも Issue フォームの `###` でもよい）に
+ * #番号 で書いた Issue（重なりは除く）
+ */
 export function prerequisitesOf(body: string): number[] {
+  const section = parseSections(body).get(SECTION.prerequisites) ?? "";
   const numbers: number[] = [];
-  let inSection = false;
-  for (const line of body.split(/\r?\n/)) {
-    const heading = /^##\s+(.*?)\s*$/.exec(line);
-    if (heading) {
-      inSection = heading[1] === PREREQUISITES_HEADING;
-      continue;
-    }
-    if (!inSection) continue;
-    for (const m of line.matchAll(/#(\d+)/g)) {
-      const n = Number(m[1]);
-      if (!numbers.includes(n)) numbers.push(n);
-    }
+  for (const m of section.matchAll(/#(\d+)/g)) {
+    const n = Number(m[1]);
+    if (!numbers.includes(n)) numbers.push(n);
   }
   return numbers;
 }
@@ -78,29 +73,16 @@ export function completedMessage(
   ].join("\n");
 }
 
-/** 引用の形（"> "）を外す */
-function unquote(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .map((l) => l.replace(/^> ?/, ""))
-    .join("\n");
-}
-
-/**
- * 要件の要約（要件の本文の最初の行）。要件の本文は、スレッドの Bot の最初の書き込み（受け取りのときに書いた引用）。
- * 見つからなければ要件の投稿 ID で示す
- */
+/** 要件の要約（要件の本文の最初の行）。見つからなければ要件の投稿 ID で示す */
 async function requirementTitle(
   chat: Chat,
   requirement: RequirementRecord,
 ): Promise<string> {
   const fallback = `要件 ${requirement.messageId}`;
   if (requirement.threadId === undefined) return fallback;
-  const botId = await chat.selfId();
-  const thread = await chat.readMessages(requirement.threadId);
-  const quoted = thread.find((m) => m.authorId === botId);
-  if (quoted === undefined) return fallback;
-  const first = unquote(quoted.text)
+  const text = await requirementText(chat, requirement.threadId);
+  if (text === undefined) return fallback;
+  const first = text
     .split("\n")
     .map((l) => l.trim())
     .find((l) => l !== "");
