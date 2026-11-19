@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
 import {
   MAX_FAILURES,
@@ -82,6 +83,44 @@ function setup(
     store.update({ repo: REPO, issue: n }, { pr, checkpoint: { stage } });
   return { deps, store, calls, moves, comments, logs, results, setStage };
 }
+
+describe("tick の要件の受け取り", () => {
+  const chatConfig = parseConfig(
+    [
+      `github: { repo: ${REPO}, project: 3, notify: me }`,
+      "protected: [e2e/**]",
+      "commands: { setup: s, test: t, acceptance: a, typecheck: y, build: b }",
+      "chat:",
+      "  type: discord",
+      '  channels: { requirements: "1", questions: "2", notices: "3" }',
+      '  allowed_users: ["u1"]',
+    ].join("\n"),
+  ).chat;
+
+  it("窓口が失敗しても、Issue の処理は止めずに失敗を書き残す", async () => {
+    const t = setup({ Ready: [3] });
+    const chat = new MemoryChat();
+    chat.readMessages = () => Promise.reject(new Error("Discord が落ちた"));
+    const config = { ...t.deps.config };
+    if (chatConfig) config.chat = chatConfig;
+    const deps: LoopDeps = { ...t.deps, config, chat };
+    await tick(deps, newLoopState());
+    expect(t.calls).toEqual(["pickUp #3", "test #3"]);
+    expect(t.logs.some((l) => l.includes("Discord が落ちた"))).toBe(true);
+  });
+
+  it("config.chat が無ければ、窓口があっても要件を読まない", async () => {
+    const t = setup({});
+    const chat = new MemoryChat();
+    let read = 0;
+    chat.readMessages = () => {
+      read++;
+      return Promise.resolve([]);
+    };
+    await tick({ ...t.deps, chat }, newLoopState());
+    expect(read).toBe(0);
+  });
+});
 
 describe("tick", () => {
   it("作業中の Issue が無ければ、Ready の番号が小さいものを1件拾って進める", async () => {
