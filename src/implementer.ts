@@ -5,6 +5,7 @@
  * - 通らなければ差し戻し（回数を数える）。途中の実装は push しておき、次の実装役が続きから直す
  */
 import type { z } from "zod";
+import { blockIssue } from "./blocked-thread.js";
 import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import type { Config } from "./config.js";
 import type { ExecResult, Shell } from "./exec.js";
@@ -303,12 +304,13 @@ export async function runImplementer(
       text: objectionFindings(out).join("\n\n"),
     });
     if (over) {
-      await board.moveIssue(issue.number, columns.blocked);
-      await board.comment(
-        issue.number,
-        objectionLimitComment(out, limit, columns.ready),
-        { mention: true },
-      );
+      await blockIssue(deps, issue.number, {
+        body: objectionLimitComment(out, limit, columns.ready),
+        reason: [
+          `実装役の異議が上限（${limit} 回）を超えました。受け入れテストの問題:`,
+          ...objectionFindings(out).map((f) => `- ${f}`),
+        ].join("\n"),
+      });
     } else {
       await board.moveIssue(issue.number, columns.testing);
       await board.comment(

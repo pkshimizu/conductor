@@ -1,5 +1,7 @@
+import { blockIssue } from "./blocked-thread.js";
 import type { Config } from "./config.js";
 import type { GitHub } from "./github.js";
+import type { Store } from "./store.js";
 
 /**
  * Issue の入口確認。書き漏れのある Issue を、テスト役に渡す前に止める。
@@ -111,23 +113,33 @@ export type IntakeBoard = Pick<GitHub, "moveIssue" | "comment">;
 export type IntakeResult =
   { accepted: true } | { accepted: false; problems: string[] };
 
+export interface IntakeDeps {
+  config: Config;
+  store: Store;
+  board: IntakeBoard;
+}
+
 /**
  * Ready の Issue を拾う。そろっていればテスト役の列へ、
- * 書き漏れがあれば Blocked に移し、欠けた項目をメンション付きでコメントする
+ * 書き漏れがあれば Blocked に移し、欠けた項目をコメントする
+ * （窓口があればメンションせずスレッドで、無ければメンションして確かめる）
  */
 export async function pickUp(
-  board: IntakeBoard,
+  deps: IntakeDeps,
   issue: { number: number; body: string },
-  columns: Config["github"]["columns"],
 ): Promise<IntakeResult> {
+  const { columns } = deps.config.github;
   const problems = checkIssueBody(issue.body);
   if (problems.length === 0) {
-    await board.moveIssue(issue.number, columns.testing);
+    await deps.board.moveIssue(issue.number, columns.testing);
     return { accepted: true };
   }
-  await board.moveIssue(issue.number, columns.blocked);
-  await board.comment(issue.number, blockedComment(problems, columns.ready), {
-    mention: true,
+  await blockIssue(deps, issue.number, {
+    body: blockedComment(problems, columns.ready),
+    reason: [
+      "Issue の本文に書き漏れがあるため、作業を始めませんでした。",
+      ...problems.map((p) => `- ${p}`),
+    ].join("\n"),
   });
   return { accepted: false, problems };
 }

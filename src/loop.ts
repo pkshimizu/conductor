@@ -6,6 +6,7 @@
  * 既存の各役とは、このファイルで定めた LoopDeps を通してつなぐ（つなぎ方は start.ts）。
  */
 import { setTimeout as delay } from "node:timers/promises";
+import { blockIssue, followBlockedThreads } from "./blocked-thread.js";
 import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
 import { pendingFindings } from "./rejection.js";
@@ -104,6 +105,34 @@ export function failureComment(
   ].join("\n");
 }
 
+/**
+ * Blocked にした Issue のスレッドを確かめる（窓口があるときだけ）。
+ * 失敗しても Issue の処理は止めない（次の確認でやり直す）
+ */
+async function blockedThreads(deps: LoopDeps): Promise<void> {
+  const { chat } = deps;
+  const chatConfig = deps.config.chat;
+  if (chat === undefined || chatConfig === undefined) return;
+  const { blocked } = deps.config.github.columns;
+  try {
+    await followBlockedThreads(
+      {
+        config: deps.config,
+        chatConfig,
+        chat,
+        store: deps.store,
+        board: deps.board,
+        log: deps.log,
+      },
+      async () => (await deps.board.issuesByColumn()).get(blocked) ?? [],
+    );
+  } catch (e) {
+    deps.log(
+      `止まったときのスレッドの確認に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
+    );
+  }
+}
+
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -180,14 +209,12 @@ async function attempt(
       return;
     }
     state.failures.delete(n);
-    const { columns } = deps.config.github;
     try {
-      await deps.board.moveIssue(n, columns.blocked);
-      await deps.board.comment(
-        n,
-        failureComment(message, count, columns.ready),
-        { mention: true },
-      );
+      // 窓口があればメンションせず、次の確認で質問チャンネルのスレッドで確かめる
+      await blockIssue(deps, n, {
+        body: failureComment(message, count, deps.config.github.columns.ready),
+        reason: message,
+      });
     } catch (e2) {
       deps.log(`#${n}: Blocked への移動に失敗: ${errorMessage(e2)}`);
     }
@@ -361,6 +388,8 @@ export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   await approveSpecs(deps);
   await decomposeRequirements(deps);
   await progressRequirements(deps);
+  // Ready に戻した Issue を同じ確認で拾うよう、列を読む前に確かめる
+  await blockedThreads(deps);
   const { columns, repo } = config.github;
   const byColumn = await board.issuesByColumn();
   const inColumn = (column: string) =>

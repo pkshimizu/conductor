@@ -164,7 +164,7 @@ export async function buildLoopDeps(
     ...(decompose === undefined ? {} : { decompose }),
     ...(progress === undefined ? {} : { progress }),
     log,
-    pickUp: (issue) => pickUp(github, issue, config.github.columns),
+    pickUp: (issue) => pickUp({ config, store, board: github }, issue),
     test: (issue) =>
       runTester(
         {

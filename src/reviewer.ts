@@ -12,6 +12,7 @@ import {
   type ApprovalBoard,
   type ApprovalResult,
 } from "./approval.js";
+import { blockIssue } from "./blocked-thread.js";
 import {
   roleOutput,
   type Finding,
@@ -377,12 +378,14 @@ export async function runReviewer(
       objections,
       checkpoint: { stage: "reviewing", reason: "objection" },
     });
-    await board.moveIssue(issue.number, columns.blocked);
-    await board.comment(
-      issue.number,
-      reviewObjectionComment(out, columns.ready),
-      { mention: true },
-    );
+    await blockIssue(deps, issue.number, {
+      body: reviewObjectionComment(out, columns.ready),
+      reason: [
+        "レビュー役が、受け入れテストと受け入れ条件の食い違いを指摘しました。",
+        out.summary,
+        ...out.findings.map((f) => `- ${formatFinding(f)}`),
+      ].join("\n"),
+    });
     return { status: "objection", objections };
   }
 

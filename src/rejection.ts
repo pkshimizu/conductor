@@ -1,8 +1,9 @@
 /**
  * 差し戻し。CI の失敗・レビューの指摘・ハッシュの不一致・ローカル確認の失敗を合算して数える。
- * 上限を超えたら Blocked に移し、メンションして人の対応を待つ。
+ * 上限を超えたら Blocked に移し、人の対応を待つ（窓口があればスレッドで、無ければメンションで確かめる）。
  * 指摘は要約として記録し、次の実装役に渡す（再起動しても失われない）。
  */
+import { blockIssue } from "./blocked-thread.js";
 import type { Config } from "./config.js";
 import type { IssueKey, Store } from "./store.js";
 
@@ -85,12 +86,13 @@ export async function recordRejection(
     text: findings.join("\n\n"),
   });
   if (blocked) {
-    await board.moveIssue(issue, config.github.columns.blocked);
-    await board.comment(
-      issue,
-      rejectionLimitComment(findings, limit, config.github.columns.ready),
-      { mention: true },
-    );
+    await blockIssue(deps, issue, {
+      body: rejectionLimitComment(findings, limit, config.github.columns.ready),
+      reason: [
+        `差し戻しが上限（${limit} 回）を超えました。最後の指摘:`,
+        ...findings.map((f) => `- ${f}`),
+      ].join("\n"),
+    });
   } else {
     await board.moveIssue(issue, config.github.columns.implementing);
     await board.comment(
