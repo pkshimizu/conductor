@@ -33,6 +33,25 @@ conductor start [フォルダ]   常駐して Issue を進める
 - 同時に動かすレビュー役の数は `limits.reviewers`（既定 3）で決めます。
 - 役が書く文章（要約・指摘・質問）の言語は `language`（既定 `日本語`）で決めます。例: `language: English`。conductor が書く定型文は日本語のままです。
 
+## 窓口（chat）
+
+要件の受け取りと人への質問をチャットで行うための設定です（Discord とのやりとりは準備中）。
+
+```yaml
+chat:
+  type: discord # 今は discord のみ
+  channels:
+    requirements: "1000000000000000001" # 要件のチャンネル ID
+    questions: "1000000000000000002" # 質問のチャンネル ID
+    notices: "1000000000000000003" # お知らせのチャンネル ID
+  allowed_users: # 許可する人（ユーザー ID）
+    - "2000000000000000001"
+```
+
+- ID は数字だけでも文字列（`"..."`）で書きます。
+- トークンは config.yaml に書かず、環境変数 `CONDUCTOR_DISCORD_TOKEN` で渡します。`chat` を書いてトークンが無ければ、`conductor start` は起動しません。
+- `chat` を書かなければ窓口を使わず、GitHub だけで動きます。
+
 ## マージの承認
 
 ```yaml
