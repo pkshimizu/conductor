@@ -23,7 +23,8 @@ import { pickUp } from "./intake.js";
 import { runLoop, type LoopDeps } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
-import type { Store } from "./store.js";
+import { runSpecifier } from "./specifier.js";
+import type { RequirementRecord, Store } from "./store.js";
 import { syncMain } from "./sync.js";
 import { runTester } from "./tester.js";
 
@@ -33,7 +34,7 @@ export function storeFile(repo: string, home = homedir()): string {
 }
 
 /**
- * 役を動かす関数。すべての役（テスト役・実装役・レビュー役）はこれを通るので、
+ * 役を動かす関数。すべての役（テスト役・実装役・レビュー役・仕様化役）はこれを通るので、
  * 言語の指示（config.language）はここで決まりの最後に足す
  */
 export function roleRunner(
@@ -90,12 +91,35 @@ export async function buildLoopDeps(
   };
 
   const chat = chatFromConfig(config);
+  const specifierInstructions = await loadRoleInstructions(
+    repoDir,
+    "specifier",
+  );
+  const specify =
+    chat === undefined
+      ? undefined
+      : (requirement: RequirementRecord) =>
+          runSpecifier(
+            {
+              config,
+              repoDir,
+              chat,
+              store,
+              git,
+              board: github,
+              run,
+              instructions: specifierInstructions,
+              log,
+            },
+            requirement,
+          );
 
   return {
     config,
     store,
     board: github,
     ...(chat === undefined ? {} : { chat }),
+    ...(specify === undefined ? {} : { specify }),
     log,
     pickUp: (issue) => pickUp(github, issue, config.github.columns),
     test: (issue) =>

@@ -10,7 +10,13 @@ import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
 import { pendingFindings } from "./rejection.js";
 import { receiveRequirements } from "./requirements.js";
-import type { IssueKey, IssueRecord, Stage, Store } from "./store.js";
+import type {
+  IssueKey,
+  IssueRecord,
+  RequirementRecord,
+  Stage,
+  Store,
+} from "./store.js";
 
 /** 確認の間隔 */
 export const LOOP_INTERVAL_MS = 90_000;
@@ -60,6 +66,8 @@ export interface LoopDeps {
   log(text: string): void;
   /** 窓口。config.chat があるときに start.ts がつなぐ。無ければ要件を受け取らない */
   chat?: Chat;
+  /** 仕様化役で要件1件を1回分進める。窓口があるときに start.ts がつなぐ。無ければ仕様化しない */
+  specify?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -202,10 +210,48 @@ async function intakeRequirements(deps: LoopDeps): Promise<void> {
   }
 }
 
-/** 1回分の確認。要件の受け取りと、作業中の Issue の処理を行う */
+/** 仕様化役が受け持つ要件の状態 */
+const SPECIFYING_STATES: readonly RequirementRecord["state"][] = [
+  "specifying",
+  "awaiting_approval",
+];
+
+/**
+ * スレッドがあり、仕様化中か承認待ちの要件を、仕様化役で1回分ずつ進める（specify があるときだけ）。
+ * 失敗しても Issue の処理は止めない（次の確認でやり直す）
+ */
+async function specifyRequirements(deps: LoopDeps): Promise<void> {
+  const { specify } = deps;
+  if (specify === undefined) return;
+  let requirements: RequirementRecord[];
+  try {
+    requirements = await deps.store.listRequirements();
+  } catch (e) {
+    deps.log(`要件の一覧を読めませんでした: ${errorMessage(e)}`);
+    return;
+  }
+  for (const r of requirements) {
+    if (r.threadId === undefined || !SPECIFYING_STATES.includes(r.state)) {
+      continue;
+    }
+    try {
+      const result = await specify(r);
+      if (result.status !== "waiting") {
+        deps.log(`要件 ${r.messageId}: ${result.status}`);
+      }
+    } catch (e) {
+      deps.log(
+        `要件 ${r.messageId} の仕様化に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
+      );
+    }
+  }
+}
+
+/** 1回分の確認。要件の受け取り・仕様化と、作業中の Issue の処理を行う */
 export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   const { config, store, board } = deps;
   await intakeRequirements(deps);
+  await specifyRequirements(deps);
   const { columns, repo } = config.github;
   const byColumn = await board.issuesByColumn();
   const inColumn = (column: string) =>

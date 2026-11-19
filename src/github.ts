@@ -172,14 +172,17 @@ export class GitHub {
   // ---- AC3: PR ----
 
   /** Issue に紐づいた PR を作る（本文に Closes #番号 を入れる） */
+  /** PR を作る。issue を渡すと、その Issue を閉じる PR にする（仕様の PR は Issue に紐づかない） */
   async createPullRequest(input: {
-    issue: number;
+    issue?: number;
     head: string;
     title: string;
     body: string;
     base?: string;
   }): Promise<PullRequest> {
     const base = input.base ?? (await this.baseBranch());
+    const closes =
+      input.issue === undefined ? "" : `\n\nCloses #${input.issue}`;
     const pr = await this.rest<{ number: number; html_url: string }>(
       "POST",
       `repos/${this.repo}/pulls`,
@@ -187,7 +190,7 @@ export class GitHub {
         title: input.title,
         head: input.head,
         base,
-        body: `${input.body.trimEnd()}\n\nCloses #${input.issue}\n`,
+        body: `${input.body.trimEnd()}${closes}\n`,
       },
     );
     return { number: pr.number, url: pr.html_url };
