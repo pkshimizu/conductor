@@ -171,8 +171,9 @@ describe("runDecomposer", () => {
   async function setup(replies: DecomposerOutput["issues"][]) {
     const chat = new MemoryChat();
     const store = new MemoryStore(() => new Date("2026-11-19T00:00:00.000Z"));
-    const head = await chat.post("2", "要件を受け取りました");
-    const threadId = await chat.createThread("2", head, "要件");
+    // チャンネルの ID はスレッドの ID（連番）とぶつからない名前にする
+    const head = await chat.post("requirements", "要件を受け取りました");
+    const threadId = await chat.createThread("requirements", head, "要件");
     await chat.post(threadId, "> 検索したい");
     const record = await store.updateRequirement("100", {
       threadId,
