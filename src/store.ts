@@ -81,6 +81,8 @@ export const REQUIREMENT_STATES = [
   "working",
   /** 完了 */
   "done",
+  /** 止めた（作業用 Issue に分けられなかったなど。人が確かめる） */
+  "blocked",
 ] as const;
 export type RequirementState = (typeof REQUIREMENT_STATES)[number];
 

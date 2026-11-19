@@ -14,6 +14,7 @@ export const ROLES = [
   "implementer",
   "reviewer",
   "specifier",
+  "decomposer",
 ] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -144,6 +145,7 @@ export const configSchema = z
         implementer: roleSchema.prefault({}),
         reviewer: roleSchema.prefault({}),
         specifier: roleSchema.prefault({}),
+        decomposer: roleSchema.prefault({}),
       })
       .strict()
       .prefault({}),
@@ -247,11 +249,13 @@ export const ROLE_DOC_HEADINGS: Record<Role, string> = {
   implementer: "実装ルール",
   reviewer: "レビュー観点",
   specifier: "仕様化の決まり",
+  decomposer: "分解の決まり",
 };
 
 /**
  * .conductor/<役>/ にある .md を、ファイル名の順に読む。
- * - tester: テスト観点、implementer: 実装ルール、reviewer: レビュー観点、specifier: 仕様化の決まり
+ * - tester: テスト観点、implementer: 実装ルール、reviewer: レビュー観点、specifier: 仕様化の決まり、
+ *   decomposer: 分解の決まり
  * - フォルダが無ければ空。中身が空のファイルは除く
  */
 export async function loadRoleDocs(
