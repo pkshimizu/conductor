@@ -127,6 +127,11 @@ export function questionsMessage(
   ].join("\n");
 }
 
+/** 要約の書き込みの1行目 */
+const SUMMARY_HEADS = ["仕様を書きました。", "仕様を直しました。"] as const;
+/** 要約の書き込みの PR の行の頭 */
+const SUMMARY_PR_PREFIX = "PR: ";
+
 /** 仕様を書いた（直した）ときの要約の書き込み */
 export function summaryMessage(
   summary: string,
@@ -134,14 +139,24 @@ export function summaryMessage(
   fixed: boolean,
 ): string {
   return [
-    fixed ? "仕様を直しました。" : "仕様を書きました。",
+    fixed ? SUMMARY_HEADS[1] : SUMMARY_HEADS[0],
     "",
     summary.trim(),
     "",
-    `PR: ${pr.url}`,
+    `${SUMMARY_PR_PREFIX}${pr.url}`,
     "",
     "直してほしい点があれば、このスレッドに書いてください。",
   ].join("\n");
+}
+
+/** summaryMessage で書いた要約の書き込みか（書き手が Bot かは呼ぶ側で確かめる） */
+export function isSummaryMessage(text: string): boolean {
+  const lines = text.split(/\r?\n/);
+  const head = lines[0]?.trim() ?? "";
+  return (
+    (SUMMARY_HEADS as readonly string[]).includes(head) &&
+    lines.some((l) => l.startsWith(SUMMARY_PR_PREFIX))
+  );
 }
 
 /** 仕様のファイルが書かれなかったときの書き込み */

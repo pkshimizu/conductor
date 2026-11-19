@@ -122,6 +122,59 @@ describe("tick の要件の受け取り", () => {
   });
 });
 
+describe("tick の仕様の承認", () => {
+  it("スレッドがあり承認待ちの要件だけに approveSpec を呼び、失敗しても Issue の処理は止めない", async () => {
+    const t = setup({ Ready: [3] });
+    await t.store.updateRequirement("10", {
+      threadId: "t10",
+      state: "awaiting_approval",
+      specPr: 1,
+    });
+    await t.store.updateRequirement("11", { threadId: "t11" });
+    await t.store.updateRequirement("12", { state: "awaiting_approval" });
+    await t.store.updateRequirement("13", {
+      threadId: "t13",
+      state: "awaiting_approval",
+    });
+    const seen: string[] = [];
+    const deps: LoopDeps = {
+      ...t.deps,
+      approveSpec: (r) => {
+        seen.push(r.messageId);
+        return r.messageId === "10"
+          ? Promise.reject(new Error("CI を読めない"))
+          : Promise.resolve({ status: "waiting" });
+      },
+    };
+    await tick(deps, newLoopState());
+    expect(seen).toEqual(["10", "13"]);
+    expect(t.calls).toEqual(["pickUp #3", "test #3"]);
+    expect(t.logs.some((l) => l.includes("CI を読めない"))).toBe(true);
+  });
+
+  it("仕様化役が状態を変えた後の記録で承認を確かめる", async () => {
+    const t = setup({});
+    await t.store.updateRequirement("10", { threadId: "t10" });
+    const seen: string[] = [];
+    const deps: LoopDeps = {
+      ...t.deps,
+      specify: async (r) => {
+        await t.store.updateRequirement(r.messageId, {
+          state: "awaiting_approval",
+          specPr: 1,
+        });
+        return { status: "specified" };
+      },
+      approveSpec: (r) => {
+        seen.push(`${r.messageId} ${r.state} ${r.specPr}`);
+        return Promise.resolve({ status: "waiting" });
+      },
+    };
+    await tick(deps, newLoopState());
+    expect(seen).toEqual(["10 awaiting_approval 1"]);
+  });
+});
+
 describe("tick", () => {
   it("作業中の Issue が無ければ、Ready の番号が小さいものを1件拾って進める", async () => {
     const t = setup({ Ready: [5, 3] });

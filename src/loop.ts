@@ -68,6 +68,8 @@ export interface LoopDeps {
   chat?: Chat;
   /** 仕様化役で要件1件を1回分進める。窓口があるときに start.ts がつなぐ。無ければ仕様化しない */
   specify?: (requirement: RequirementRecord) => Promise<StepResult>;
+  /** 承認待ちの要件1件の承認（要約への ✅）を1回分確かめる。窓口があるときに start.ts がつなぐ。無ければ承認を確かめない */
+  approveSpec?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -247,11 +249,42 @@ async function specifyRequirements(deps: LoopDeps): Promise<void> {
   }
 }
 
-/** 1回分の確認。要件の受け取り・仕様化と、作業中の Issue の処理を行う */
+/**
+ * スレッドがあり承認待ちの要件の、仕様の承認を1回分ずつ確かめる（approveSpec があるときだけ）。
+ * 仕様化役が要約を書き直した後の状態で確かめるよう、仕様化の後に一覧を読み直す。
+ * 失敗しても Issue の処理は止めない（次の確認でやり直す）
+ */
+async function approveSpecs(deps: LoopDeps): Promise<void> {
+  const { approveSpec } = deps;
+  if (approveSpec === undefined) return;
+  let requirements: RequirementRecord[];
+  try {
+    requirements = await deps.store.listRequirements();
+  } catch (e) {
+    deps.log(`要件の一覧を読めませんでした: ${errorMessage(e)}`);
+    return;
+  }
+  for (const r of requirements) {
+    if (r.threadId === undefined || r.state !== "awaiting_approval") continue;
+    try {
+      const result = await approveSpec(r);
+      if (result.status !== "waiting") {
+        deps.log(`要件 ${r.messageId}: ${result.status}`);
+      }
+    } catch (e) {
+      deps.log(
+        `要件 ${r.messageId} の承認の確認に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
+      );
+    }
+  }
+}
+
+/** 1回分の確認。要件の受け取り・仕様化・仕様の承認と、作業中の Issue の処理を行う */
 export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   const { config, store, board } = deps;
   await intakeRequirements(deps);
   await specifyRequirements(deps);
+  await approveSpecs(deps);
   const { columns, repo } = config.github;
   const byColumn = await board.issuesByColumn();
   const inColumn = (column: string) =>

@@ -265,6 +265,12 @@ export class GitHub {
 
   /** PR を squash でマージし、Issue を完了列に移す */
   async merge(pr: number, issue: number, doneColumn: string): Promise<void> {
+    await this.mergePullRequest(pr);
+    await this.moveIssue(issue, doneColumn);
+  }
+
+  /** PR を squash でマージするだけ（列は動かさない。Issue に紐づかない仕様の PR に使う） */
+  async mergePullRequest(pr: number): Promise<void> {
     const res = await this.exec(
       ["pr", "merge", String(pr), "--squash", "-R", this.repo],
       {},
@@ -275,7 +281,6 @@ export class GitHub {
         res.stderr.trim(),
       );
     }
-    await this.moveIssue(issue, doneColumn);
   }
 
   // ---- マージの承認（approval.ts） ----
