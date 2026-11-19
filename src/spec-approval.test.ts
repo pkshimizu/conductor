@@ -3,6 +3,7 @@ import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
 import type { CiResult } from "./github.js";
 import {
+  approvedMessage,
   checkSpecApproval,
   ciFailedHead,
   ciFailedMessage,
@@ -195,5 +196,59 @@ describe("checkSpecApproval", () => {
     const record = await s.store.getRequirement("100");
     expect(record?.state).toBe("working");
     expect(record?.specPr).toBe(PR.number);
+  });
+
+  it("アーカイブに一度失敗しても、次の確認でアーカイブしてロックし、作業中にする", async () => {
+    const s = await setup();
+    s.chat.addReaction(s.threadId, s.latest, "✅", ALLOWED);
+    const archive = s.chat.archiveThread.bind(s.chat);
+    let fail = true;
+    s.chat.archiveThread = (threadId: string) => {
+      if (fail) {
+        fail = false;
+        return Promise.reject(new Error("Discord が一時的に失敗しました"));
+      }
+      return archive(threadId);
+    };
+
+    await expect(checkSpecApproval(s.deps, s.record)).rejects.toThrow(
+      "一時的に失敗",
+    );
+    const pending = await s.store.getRequirement("100");
+    expect(pending?.state).toBe("awaiting_approval");
+    expect(s.chat.threads.get(s.threadId)).toEqual(
+      expect.objectContaining({ archived: false, locked: false }),
+    );
+
+    if (pending === undefined) throw new Error("要件がありません");
+    expect((await checkSpecApproval(s.deps, pending)).status).toBe("approved");
+    expect(s.chat.threads.get(s.threadId)).toEqual(
+      expect.objectContaining({ archived: true, locked: true }),
+    );
+    expect((await s.store.getRequirement("100"))?.state).toBe("working");
+    // マージの完了の書き込みは1回だけ
+    const announced = (await s.chat.readMessages(s.threadId)).filter((m) =>
+      m.text.startsWith(approvedMessage(PR.number)),
+    );
+    expect(announced).toHaveLength(1);
+  });
+
+  it("要件の更新に失敗しても、次の確認でマージ済みの PR を成功として扱い作業中にする", async () => {
+    const s = await setup();
+    s.chat.addReaction(s.threadId, s.latest, "✅", ALLOWED);
+    const update = s.store.updateRequirement.bind(s.store);
+    let fail = true;
+    s.store.updateRequirement = (id, patch) => {
+      if (fail && patch.state === "working") {
+        fail = false;
+        return Promise.reject(new Error("SQLite が一時的に失敗しました"));
+      }
+      return update(id, patch);
+    };
+    await expect(checkSpecApproval(s.deps, s.record)).rejects.toThrow(
+      "一時的に失敗",
+    );
+    expect((await checkSpecApproval(s.deps, s.record)).status).toBe("approved");
+    expect((await s.store.getRequirement("100"))?.state).toBe("working");
   });
 });

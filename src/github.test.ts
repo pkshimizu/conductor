@@ -415,7 +415,37 @@ describe("AC5: マージ", () => {
     await expect(gh.merge(12, 7, "Done")).rejects.toThrow(
       "PR #12 をマージできませんでした",
     );
-    expect(calls).toHaveLength(1);
+    // マージ済みかを確かめる呼び出しだけで、列を動かす GraphQL は呼ばない
+    expect(calls.map((c) => c.args.slice(0, 2))).toEqual([
+      ["pr", "merge"],
+      ["api", "repos/me/app/pulls/12"],
+    ]);
+  });
+
+  it("マージ済みの PR は成功として扱う", async () => {
+    const { gh } = fakeGh((args) => {
+      if (args[0] === "pr")
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "Pull request is already merged",
+        };
+      if (args[1] === "repos/me/app/pulls/12") return ok({ merged: true });
+      return undefined;
+    });
+    await expect(gh.mergePullRequest(12)).resolves.toBeUndefined();
+  });
+
+  it("マージされていない PR のマージの失敗はエラーにする", async () => {
+    const { gh } = fakeGh((args) => {
+      if (args[0] === "pr")
+        return { code: 1, stdout: "", stderr: "Required status check" };
+      if (args[1] === "repos/me/app/pulls/12") return ok({ merged: false });
+      return undefined;
+    });
+    await expect(gh.mergePullRequest(12)).rejects.toThrow(
+      "PR #12 をマージできませんでした",
+    );
   });
 });
 

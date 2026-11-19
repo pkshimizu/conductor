@@ -20,7 +20,7 @@ import {
 export interface SpecApprovalBoard {
   /** 仕様の PR の CI の結果（github.ts の GitHub.ciStatus と同じ形） */
   ciStatus(pr: number): Promise<CiResult>;
-  /** 仕様の PR をマージする（Issue に紐づかないので列は動かさない） */
+  /** 仕様の PR をマージする（Issue に紐づかないので列は動かさない）。マージ済みなら成功として扱う */
   mergePullRequest(pr: number): Promise<void>;
 }
 
@@ -150,11 +150,20 @@ export async function checkSpecApproval(
     return { status: "ci_failed" };
   }
 
-  await board.mergePullRequest(specPr);
-  await store.updateRequirement(requirement.messageId, { state: "working" });
+  // 途中で失敗しても次の確認で繰り返せるように、どの段も繰り返して壊れないようにし、
+  // 要件を working にするのは最後にする（working にすると次の確認で拾わなくなる）
+  await board.mergePullRequest(specPr); // マージ済みなら成功として扱う
   deps.log(`${name}: 仕様の PR #${specPr} をマージしました`);
-  await chat.post(threadId, approvedMessage(specPr));
+  const approved = approvedMessage(specPr);
+  const announced = thread.some(
+    (m) =>
+      m.authorId === botId &&
+      compareMessageIds(m.id, summary.id) > 0 &&
+      m.text.startsWith(approved),
+  );
+  if (!announced) await chat.post(threadId, approved);
   await chat.archiveThread(threadId);
   await chat.lockThread(threadId);
+  await store.updateRequirement(requirement.messageId, { state: "working" });
   return { status: "approved" };
 }
