@@ -5,6 +5,9 @@ import { z } from "zod";
 import {
   applyRequirementUpdate,
   applyUpdate,
+  type BlockedThreadInput,
+  type BlockedThreadRecord,
+  blockedThreadRecord,
   type Checkpoint,
   type Clock,
   compareMessageIds,
@@ -60,7 +63,34 @@ CREATE TABLE IF NOT EXISTS read_positions (
   channel_id TEXT PRIMARY KEY,
   message_id TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS blocked_threads (
+  repo TEXT NOT NULL,
+  issue INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  thread_id TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (repo, issue)
+);
 `;
+
+interface BlockedThreadRow {
+  repo: string;
+  issue: number;
+  reason: string;
+  thread_id: string | null;
+  updated_at: string;
+}
+
+function blockedThreadFromRow(row: BlockedThreadRow): BlockedThreadRecord {
+  const r: BlockedThreadRecord = {
+    repo: row.repo,
+    issue: row.issue,
+    reason: row.reason,
+    updatedAt: row.updated_at,
+  };
+  if (row.thread_id !== null) r.threadId = row.thread_id;
+  return r;
+}
 
 interface RequirementRow {
   message_id: string;
@@ -337,6 +367,45 @@ export class SqliteStore implements Store {
       )
       .run(channelId, messageId);
     return Promise.resolve();
+  }
+
+  getBlockedThread(key: IssueKey): Promise<BlockedThreadRecord | undefined> {
+    const row = this.db
+      .prepare("SELECT * FROM blocked_threads WHERE repo = ? AND issue = ?")
+      .get(key.repo, key.issue) as BlockedThreadRow | undefined;
+    return Promise.resolve(row && blockedThreadFromRow(row));
+  }
+
+  setBlockedThread(
+    key: IssueKey,
+    input: BlockedThreadInput,
+  ): Promise<BlockedThreadRecord> {
+    const r = blockedThreadRecord(key, input, this.clock());
+    this.db
+      .prepare(
+        `INSERT INTO blocked_threads (repo, issue, reason, thread_id, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (repo, issue) DO UPDATE SET
+           reason = excluded.reason,
+           thread_id = excluded.thread_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(r.repo, r.issue, r.reason, r.threadId ?? null, r.updatedAt);
+    return Promise.resolve({ ...r });
+  }
+
+  deleteBlockedThread(key: IssueKey): Promise<void> {
+    this.db
+      .prepare("DELETE FROM blocked_threads WHERE repo = ? AND issue = ?")
+      .run(key.repo, key.issue);
+    return Promise.resolve();
+  }
+
+  listBlockedThreads(repo: string): Promise<BlockedThreadRecord[]> {
+    const rows = this.db
+      .prepare("SELECT * FROM blocked_threads WHERE repo = ? ORDER BY issue")
+      .all(repo) as unknown as BlockedThreadRow[];
+    return Promise.resolve(rows.map(blockedThreadFromRow));
   }
 
   close(): Promise<void> {

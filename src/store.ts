@@ -148,6 +148,26 @@ export type RequirementUpdate = {
     RequirementRecord[K] | undefined;
 };
 
+/**
+ * Blocked にした Issue の、人に対応を確かめるスレッドの記録（窓口があるときだけ使う）。
+ * Blocked にしたときに理由だけで作り、次の確認で質問チャンネルにスレッドを作って threadId を入れる。
+ * 人が方針を書くか、GitHub で Blocked の列から出したら消す
+ */
+export interface BlockedThreadRecord extends IssueKey {
+  /** 止まった理由（最後のエラー） */
+  reason: string;
+  /** 質問チャンネルに作ったスレッド。まだ作っていなければ undefined */
+  threadId?: string;
+  /** 最後に更新した時刻（ISO 8601） */
+  updatedAt: string;
+}
+
+/** 書き込む項目 */
+export interface BlockedThreadInput {
+  reason: string;
+  threadId?: string;
+}
+
 export interface Store {
   get(key: IssueKey): Promise<IssueRecord | undefined>;
   /** 記録が無ければ回数0で作り、指定した項目だけ書き換える。undefined を渡した項目は消す */
@@ -166,7 +186,31 @@ export interface Store {
   /** チャンネルまたはスレッドごとの、最後に読んだ投稿 ID */
   getReadPosition(channelId: string): Promise<string | undefined>;
   setReadPosition(channelId: string, messageId: string): Promise<void>;
+  getBlockedThread(key: IssueKey): Promise<BlockedThreadRecord | undefined>;
+  /** Issue の記録を置き換える（無ければ作る） */
+  setBlockedThread(
+    key: IssueKey,
+    input: BlockedThreadInput,
+  ): Promise<BlockedThreadRecord>;
+  deleteBlockedThread(key: IssueKey): Promise<void>;
+  /** リポジトリの記録を Issue の番号の順に返す */
+  listBlockedThreads(repo: string): Promise<BlockedThreadRecord[]>;
   close(): Promise<void>;
+}
+
+export function blockedThreadRecord(
+  key: IssueKey,
+  input: BlockedThreadInput,
+  now: Date,
+): BlockedThreadRecord {
+  const r: BlockedThreadRecord = {
+    repo: key.repo,
+    issue: key.issue,
+    reason: input.reason,
+    updatedAt: now.toISOString(),
+  };
+  if (input.threadId !== undefined) r.threadId = input.threadId;
+  return r;
 }
 
 export type Clock = () => Date;
@@ -259,6 +303,7 @@ export class MemoryStore implements Store {
   private readonly log = new Map<string, Summary[]>();
   private readonly requirements = new Map<string, RequirementRecord>();
   private readonly readPositions = new Map<string, string>();
+  private readonly blocked = new Map<string, BlockedThreadRecord>();
 
   constructor(private readonly clock: Clock = systemClock) {}
 
@@ -334,6 +379,34 @@ export class MemoryStore implements Store {
   setReadPosition(channelId: string, messageId: string): Promise<void> {
     this.readPositions.set(channelId, messageId);
     return Promise.resolve();
+  }
+
+  getBlockedThread(key: IssueKey): Promise<BlockedThreadRecord | undefined> {
+    const r = this.blocked.get(this.id(key));
+    return Promise.resolve(r && { ...r });
+  }
+
+  setBlockedThread(
+    key: IssueKey,
+    input: BlockedThreadInput,
+  ): Promise<BlockedThreadRecord> {
+    const r = blockedThreadRecord(key, input, this.clock());
+    this.blocked.set(this.id(key), r);
+    return Promise.resolve({ ...r });
+  }
+
+  deleteBlockedThread(key: IssueKey): Promise<void> {
+    this.blocked.delete(this.id(key));
+    return Promise.resolve();
+  }
+
+  listBlockedThreads(repo: string): Promise<BlockedThreadRecord[]> {
+    return Promise.resolve(
+      [...this.blocked.values()]
+        .filter((r) => r.repo === repo)
+        .sort((a, b) => a.issue - b.issue)
+        .map((r) => ({ ...r })),
+    );
   }
 
   close(): Promise<void> {

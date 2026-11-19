@@ -391,6 +391,50 @@ describe("tick", () => {
     expect(t.comments[0]?.body).toContain("Ready");
   });
 
+  it("窓口があれば、Blocked にしてもメンションせず、止まった理由を記録して次の確認でスレッドを作る", async () => {
+    const t = setup({ Testing: [3] });
+    t.results.test = () => Promise.reject(new Error("壊れた"));
+    const config = parseConfig(
+      [
+        `github: { repo: ${REPO}, project: 3, notify: me }`,
+        "protected: [e2e/**]",
+        "commands: { setup: s, test: t, acceptance: a, typecheck: y, build: b }",
+        "chat:",
+        "  type: discord",
+        '  channels: { requirements: "1", questions: "2", notices: "3" }',
+        '  allowed_users: ["u1"]',
+      ].join("\n"),
+    );
+    const chat = new MemoryChat();
+    const board = new Map<string, LoopIssue[]>([["Testing", [issue(3)]]]);
+    const deps: LoopDeps = {
+      ...t.deps,
+      config,
+      chat,
+      board: {
+        ...t.deps.board,
+        issuesByColumn: () => Promise.resolve(board),
+        moveIssue: (n, column) => {
+          t.moves.push([n, column]);
+          board.delete("Testing");
+          board.set(column, [issue(n)]);
+          return Promise.resolve();
+        },
+      },
+    };
+    const state = newLoopState();
+    for (let i = 0; i < MAX_FAILURES; i++) await tick(deps, state);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    expect(t.comments).toHaveLength(1);
+    expect(t.comments[0]?.mention).toBeUndefined();
+    const noted = await t.store.getBlockedThread({ repo: REPO, issue: 3 });
+    expect(noted?.reason).toBe("壊れた");
+
+    await tick(deps, state);
+    const channels = [...chat.threads.values()].map((th) => th.channelId);
+    expect(channels).toEqual(["2"]);
+  });
+
   it("途中で成功したら、失敗の回数を数え直す", async () => {
     const t = setup({ Testing: [3] });
     const state = newLoopState();

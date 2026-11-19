@@ -225,6 +225,27 @@ describe.each([
     await store.update({ repo: "other/repo", issue: 1 }, {});
     expect((await store.list(KEY.repo)).map((r) => r.issue)).toEqual([3, 4]);
   });
+
+  it("止まったときのスレッドの記録を置き換え・一覧・削除できる", async () => {
+    expect(await store.getBlockedThread(KEY)).toBeUndefined();
+    await store.setBlockedThread(KEY, { reason: "壊れた" });
+    expect(await store.getBlockedThread(KEY)).toEqual({
+      ...KEY,
+      reason: "壊れた",
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    });
+    await store.setBlockedThread(KEY, { reason: "壊れた", threadId: "t1" });
+    await store.setBlockedThread({ ...KEY, issue: 1 }, { reason: "x" });
+    const other = { repo: "other/repo", issue: 1 };
+    await store.setBlockedThread(other, { reason: "y" });
+    const listed = await store.listBlockedThreads(KEY.repo);
+    expect(listed.map((r) => r.issue)).toEqual([1, 2]);
+    expect(listed[0]?.threadId).toBeUndefined();
+    expect(listed[1]?.threadId).toBe("t1");
+    await store.deleteBlockedThread(KEY);
+    expect(await store.getBlockedThread(KEY)).toBeUndefined();
+    expect(await store.listBlockedThreads(KEY.repo)).toHaveLength(1);
+  });
 });
 
 describe("SqliteStore の再起動", () => {
