@@ -163,15 +163,22 @@ function unquote(text: string): string {
     .join("\n");
 }
 
-function speaker(message: ChatMessage, allowed: ReadonlySet<string>): string {
-  return allowed.has(message.authorId)
-    ? `人（<@${message.authorId}>）`
-    : "conductor";
+/** 書き手の表示。Bot でも許可した人でもなければ undefined（プロンプトに入れない） */
+function speaker(
+  message: ChatMessage,
+  botId: string,
+  allowed: ReadonlySet<string>,
+): string | undefined {
+  if (message.authorId === botId) return "conductor";
+  if (allowed.has(message.authorId)) return `人（<@${message.authorId}>）`;
+  return undefined;
 }
 
 export function specifierPrompt(input: {
   requirement: string;
+  /** スレッドの投稿。Bot と許可した人の投稿だけを入れ、それ以外は捨てる */
   thread: readonly ChatMessage[];
+  botId: string;
   allowed: ReadonlySet<string>;
   /** 仕様の PR があれば修正の依頼 */
   pr?: { number: number; url?: string };
@@ -186,7 +193,9 @@ export function specifierPrompt(input: {
     "# スレッドのやり取り（古い順）",
   ];
   for (const m of input.thread) {
-    lines.push("", `## ${speaker(m, input.allowed)}`, "", m.text.trim());
+    const who = speaker(m, input.botId, input.allowed);
+    if (who === undefined) continue;
+    lines.push("", `## ${who}`, "", m.text.trim());
   }
   lines.push("", "# 依頼");
   if (input.pr) {
@@ -243,106 +252,129 @@ export async function runSpecifier(
     return { status: "waiting" };
   }
 
-  // 要件の本文はスレッドの最初の引用（受け取りのときに書いたもの）
-  const requirementText = unquote(thread[0]?.text ?? "");
+  // 要件の本文は、スレッドの Bot の最初の書き込み（受け取りのときに書いた引用）。
+  // 他の人の書き込みを要件として渡さない。取れなければ起動しない
+  const botId = await chat.selfId();
+  const quoted = thread.find((m) => m.authorId === botId);
+  if (quoted === undefined) {
+    deps.log(
+      `要件 ${requirement.messageId}: スレッドに要件の引用が無いので仕様化しません`,
+    );
+    return { status: "skipped" };
+  }
+  const requirementText = unquote(quoted.text);
   const branch = specBranch(requirement.messageId);
   const pr =
     requirement.specPr === undefined
       ? undefined
       : await board.findPullRequest(branch);
-  // PR があればそのブランチの続きから、無ければ main から作る
-  if (requirement.specPr === undefined) await git.startBranch(branch);
-  else await git.startBranch(branch, branch);
-
-  const result = await deps.run({
-    role: "specifier",
-    cwd: deps.repoDir,
-    systemPrompt: [SPECIFIER_RULES, deps.instructions]
-      .filter(Boolean)
-      .join("\n\n"),
-    prompt: specifierPrompt({
-      requirement: requirementText,
-      thread,
-      allowed,
-      ...(requirement.specPr === undefined
-        ? {}
-        : {
-            pr: {
-              number: requirement.specPr,
-              ...(pr === undefined ? {} : { url: pr.url }),
-            },
-          }),
-      requests,
-    }),
-    schema: specifierOutputSchema,
-    allow: specifierAllow(config),
-    ...(deps.model ? { model: deps.model } : {}),
-  });
-  const out = result.output;
-
-  // 書いてよいファイルの外の変更は捨てる
-  const changed = await git.changedFiles();
-  const written = changed.filter((f) => matchesAny(f, SPECIFIER_WRITABLE));
-  await git.discard(changed.filter((f) => !written.includes(f)));
-
-  const readUpTo = async (posted: string) => {
-    // 役が動いている間に書かれた人の書き込みを取りこぼさないよう、起動前に読んだ最後の位置にする
-    await store.setReadPosition(threadId, thread.at(-1)?.id ?? posted);
-  };
-
-  if (out.questions.length > 0) {
+  // 前の要件や役の変更を持ち越さないよう、切り替える前に作業ツリーを片付ける
+  await git.discardAll();
+  try {
+    // PR があればそのブランチの続きから、無ければ main から作る
+    if (requirement.specPr === undefined) await git.startBranch(branch);
+    else await git.startBranch(branch, branch);
+    return await specify(threadId);
+  } finally {
+    // 失敗したときも、作業ツリーに変更を残さない
     await git.discardAll();
-    const posted = await chat.post(threadId, questionsMessage(out.questions));
-    const current = await store.getRequirement(requirement.messageId);
-    await store.updateRequirement(requirement.messageId, {
-      questions: (current?.questions ?? 0) + out.questions.length,
+  }
+
+  // 関数の宣言では threadId の絞り込みが効かないので、引数で受け取る
+  async function specify(
+    threadId: string,
+  ): Promise<{ status: SpecifierStatus }> {
+    const result = await deps.run({
+      role: "specifier",
+      cwd: deps.repoDir,
+      systemPrompt: [SPECIFIER_RULES, deps.instructions]
+        .filter(Boolean)
+        .join("\n\n"),
+      prompt: specifierPrompt({
+        requirement: requirementText,
+        thread,
+        botId,
+        allowed,
+        ...(requirement.specPr === undefined
+          ? {}
+          : {
+              pr: {
+                number: requirement.specPr,
+                ...(pr === undefined ? {} : { url: pr.url }),
+              },
+            }),
+        requests,
+      }),
+      schema: specifierOutputSchema,
+      allow: specifierAllow(config),
+      ...(deps.model ? { model: deps.model } : {}),
     });
+    const out = result.output;
+
+    // 書いてよいファイルの外の変更は捨てる
+    const changed = await git.changedFiles();
+    const written = changed.filter((f) => matchesAny(f, SPECIFIER_WRITABLE));
+    await git.discard(changed.filter((f) => !written.includes(f)));
+
+    const readUpTo = async (posted: string) => {
+      // 役が動いている間に書かれた人の書き込みを取りこぼさないよう、起動前に読んだ最後の位置にする
+      await store.setReadPosition(threadId, thread.at(-1)?.id ?? posted);
+    };
+
+    if (out.questions.length > 0) {
+      await git.discardAll();
+      const posted = await chat.post(threadId, questionsMessage(out.questions));
+      const current = await store.getRequirement(requirement.messageId);
+      await store.updateRequirement(requirement.messageId, {
+        questions: (current?.questions ?? 0) + out.questions.length,
+      });
+      await readUpTo(posted);
+      deps.log(
+        `要件 ${requirement.messageId}: 疑問を ${out.questions.length} 件書きました`,
+      );
+      return { status: "asked" };
+    }
+
+    if (written.length === 0 && pr === undefined) {
+      await git.discardAll();
+      const posted = await chat.post(threadId, unwrittenMessage(out.summary));
+      await readUpTo(posted);
+      deps.log(
+        `要件 ${requirement.messageId}: 仕様のファイルが書かれませんでした`,
+      );
+      return { status: "unwritten" };
+    }
+
+    const name = threadName(requirementText);
+    if (written.length > 0) {
+      await git.commit(
+        written,
+        pr === undefined
+          ? `docs: 仕様「${name}」`
+          : `docs: 仕様「${name}」を直す`,
+      );
+      await git.push(branch);
+    }
+    const specPr =
+      pr ??
+      (await board.findPullRequest(branch)) ??
+      (await board.createPullRequest({
+        head: branch,
+        title: `仕様: ${name}`,
+        body: out.summary,
+      }));
+    await store.updateRequirement(requirement.messageId, {
+      specPr: specPr.number,
+      state: "awaiting_approval",
+    });
+    const posted = await chat.post(
+      threadId,
+      summaryMessage(out.summary, specPr, pr !== undefined),
+    );
     await readUpTo(posted);
     deps.log(
-      `要件 ${requirement.messageId}: 疑問を ${out.questions.length} 件書きました`,
+      `要件 ${requirement.messageId}: 仕様の PR #${specPr.number} を${pr === undefined ? "作りました" : "直しました"}`,
     );
-    return { status: "asked" };
+    return { status: "specified" };
   }
-
-  if (written.length === 0 && pr === undefined) {
-    await git.discardAll();
-    const posted = await chat.post(threadId, unwrittenMessage(out.summary));
-    await readUpTo(posted);
-    deps.log(
-      `要件 ${requirement.messageId}: 仕様のファイルが書かれませんでした`,
-    );
-    return { status: "unwritten" };
-  }
-
-  const name = threadName(requirementText);
-  if (written.length > 0) {
-    await git.commit(
-      written,
-      pr === undefined
-        ? `docs: 仕様「${name}」`
-        : `docs: 仕様「${name}」を直す`,
-    );
-    await git.push(branch);
-  }
-  const specPr =
-    pr ??
-    (await board.findPullRequest(branch)) ??
-    (await board.createPullRequest({
-      head: branch,
-      title: `仕様: ${name}`,
-      body: out.summary,
-    }));
-  await store.updateRequirement(requirement.messageId, {
-    specPr: specPr.number,
-    state: "awaiting_approval",
-  });
-  const posted = await chat.post(
-    threadId,
-    summaryMessage(out.summary, specPr, pr !== undefined),
-  );
-  await readUpTo(posted);
-  deps.log(
-    `要件 ${requirement.messageId}: 仕様の PR #${specPr.number} を${pr === undefined ? "作りました" : "直しました"}`,
-  );
-  return { status: "specified" };
 }

@@ -171,7 +171,6 @@ export class GitHub {
 
   // ---- AC3: PR ----
 
-  /** Issue に紐づいた PR を作る（本文に Closes #番号 を入れる） */
   /** PR を作る。issue を渡すと、その Issue を閉じる PR にする（仕様の PR は Issue に紐づかない） */
   async createPullRequest(input: {
     issue?: number;
