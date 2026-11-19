@@ -6,7 +6,7 @@
  * 既存の各役とは、このファイルで定めた LoopDeps を通してつなぐ（つなぎ方は start.ts）。
  */
 import { setTimeout as delay } from "node:timers/promises";
-import { followBlockedThreads, noteBlocked } from "./blocked-thread.js";
+import { blockIssue, followBlockedThreads } from "./blocked-thread.js";
 import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
 import { pendingFindings } from "./rejection.js";
@@ -93,7 +93,6 @@ export function failureComment(
   message: string,
   count: number,
   ready: string,
-  options: { thread?: boolean } = {},
 ): string {
   return [
     `${count} 回続けて失敗したため、Blocked に移しました。最後のエラー:`,
@@ -102,15 +101,8 @@ export function failureComment(
     message,
     "```",
     "",
-    options.thread === true
-      ? `窓口の質問チャンネルのスレッドで対応を確かめます。方針をスレッドに書くか、確認したら ${ready} 列に戻してください。`
-      : `確認したら ${ready} 列に戻してください。`,
+    `確認したら ${ready} 列に戻してください。`,
   ].join("\n");
-}
-
-/** 止まったときに、Issue でのメンションに代えてスレッドで確かめるか（窓口があるとき） */
-function usesThreads(deps: LoopDeps): boolean {
-  return deps.chat !== undefined && deps.config.chat !== undefined;
 }
 
 /**
@@ -217,23 +209,12 @@ async function attempt(
       return;
     }
     state.failures.delete(n);
-    const { columns, repo } = deps.config.github;
     try {
-      await deps.board.moveIssue(n, columns.blocked);
-      if (usesThreads(deps)) {
-        // メンションはせず、次の確認で質問チャンネルのスレッドで確かめる
-        await noteBlocked(deps.store, { repo, issue: n }, message);
-        await deps.board.comment(
-          n,
-          failureComment(message, count, columns.ready, { thread: true }),
-        );
-      } else {
-        await deps.board.comment(
-          n,
-          failureComment(message, count, columns.ready),
-          { mention: true },
-        );
-      }
+      // 窓口があればメンションせず、次の確認で質問チャンネルのスレッドで確かめる
+      await blockIssue(deps, n, {
+        body: failureComment(message, count, deps.config.github.columns.ready),
+        reason: message,
+      });
     } catch (e2) {
       deps.log(`#${n}: Blocked への移動に失敗: ${errorMessage(e2)}`);
     }

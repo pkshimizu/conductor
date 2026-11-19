@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
+import { parseConfig } from "./config.js";
+import { MemoryStore } from "./store.js";
 import {
   checkIssueBody,
   parseSections,
@@ -33,14 +35,28 @@ const COMPLETE = `### 目的
 - ログイン
 `;
 
-const COLUMNS = {
-  ready: "Ready",
-  testing: "Testing",
-  implementing: "Implementing",
-  reviewing: "Reviewing",
-  done: "Done",
-  blocked: "Blocked",
-};
+function makeConfig(options: { chat?: boolean; testing?: string } = {}) {
+  const lines = [
+    "github:",
+    "  repo: me/app",
+    "  project: 3",
+    "  notify: me",
+    ...(options.testing === undefined
+      ? []
+      : [`  columns: { testing: ${options.testing} }`]),
+    "protected: [e2e/**]",
+    "commands: { setup: s, test: t, acceptance: a, typecheck: y, build: b }",
+  ];
+  if (options.chat === true) {
+    lines.push(
+      "chat:",
+      "  type: discord",
+      '  channels: { requirements: "100", questions: "200", notices: "300" }',
+      '  allowed_users: ["u1"]',
+    );
+  }
+  return parseConfig(lines.join("\n"));
+}
 
 function fakeBoard() {
   const calls: string[] = [];
@@ -147,8 +163,12 @@ describe("書き漏れの確認", () => {
 describe("AC2: 書き漏れのある Issue を拾おうとする", () => {
   it("Blocked に移し、欠けた項目をメンション付きでコメントする", async () => {
     const { board, calls } = fakeBoard();
+    const store = new MemoryStore();
     const body = COMPLETE.replace(/### 目的[\s\S]*?(?=### 受け入れ)/, "");
-    const result = await pickUp(board, { number: 7, body }, COLUMNS);
+    const result = await pickUp(
+      { config: makeConfig(), store, board },
+      { number: 7, body },
+    );
     expect(result).toEqual({
       accepted: false,
       problems: ["「目的」の見出しがありません"],
@@ -158,6 +178,22 @@ describe("AC2: 書き漏れのある Issue を拾おうとする", () => {
       "comment #7 @書き漏れがあるため、作業を始めずに Blocked に移しました。\n\n" +
         "- 「目的」の見出しがありません\n\n直したら Ready 列に戻してください。",
     ]);
+    expect(await store.listBlockedThreads("me/app")).toEqual([]);
+  });
+
+  it("窓口があれば、メンションせずに欠けた項目を理由として記録する", async () => {
+    const { board, calls } = fakeBoard();
+    const store = new MemoryStore();
+    const body = COMPLETE.replace(/### 目的[\s\S]*?(?=### 受け入れ)/, "");
+    await pickUp(
+      { config: makeConfig({ chat: true }), store, board },
+      { number: 7, body },
+    );
+    expect(calls[0]).toBe("move #7 Blocked");
+    expect(calls[1]).toMatch(/^comment #7 書き漏れがあるため/);
+    expect(calls[1]).toContain("スレッド");
+    const record = await store.getBlockedThread({ repo: "me/app", issue: 7 });
+    expect(record?.reason).toContain("「目的」の見出しがありません");
   });
 });
 
@@ -165,9 +201,12 @@ describe("AC3: そろった Issue を拾う", () => {
   it("テスト役の列に進め、コメントはしない", async () => {
     const { board, calls } = fakeBoard();
     const result = await pickUp(
-      board,
+      {
+        config: makeConfig({ testing: "テスト中" }),
+        store: new MemoryStore(),
+        board,
+      },
       { number: 3, body: COMPLETE },
-      { ...COLUMNS, testing: "テスト中" },
     );
     expect(result).toEqual({ accepted: true });
     expect(calls).toEqual(["move #3 テスト中"]);

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS blocked_threads (
   issue INTEGER NOT NULL,
   reason TEXT NOT NULL,
   thread_id TEXT,
+  copied INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (repo, issue)
 );
@@ -78,6 +79,7 @@ interface BlockedThreadRow {
   issue: number;
   reason: string;
   thread_id: string | null;
+  copied: number;
   updated_at: string;
 }
 
@@ -89,6 +91,7 @@ function blockedThreadFromRow(row: BlockedThreadRow): BlockedThreadRecord {
     updatedAt: row.updated_at,
   };
   if (row.thread_id !== null) r.threadId = row.thread_id;
+  if (row.copied !== 0) r.copied = true;
   return r;
 }
 
@@ -383,14 +386,22 @@ export class SqliteStore implements Store {
     const r = blockedThreadRecord(key, input, this.clock());
     this.db
       .prepare(
-        `INSERT INTO blocked_threads (repo, issue, reason, thread_id, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO blocked_threads (repo, issue, reason, thread_id, copied, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, issue) DO UPDATE SET
            reason = excluded.reason,
            thread_id = excluded.thread_id,
+           copied = excluded.copied,
            updated_at = excluded.updated_at`,
       )
-      .run(r.repo, r.issue, r.reason, r.threadId ?? null, r.updatedAt);
+      .run(
+        r.repo,
+        r.issue,
+        r.reason,
+        r.threadId ?? null,
+        r.copied === true ? 1 : 0,
+        r.updatedAt,
+      );
     return Promise.resolve({ ...r });
   }
 

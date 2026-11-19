@@ -4,6 +4,7 @@
  * 保護対象と .conductor/ のハッシュを記録し、実装役が変えていないかを後で確かめる。
  */
 import { z } from "zod";
+import { blockIssue } from "./blocked-thread.js";
 import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import { CONDUCTOR_DIR, type Config } from "./config.js";
 import type { Shell } from "./exec.js";
@@ -321,12 +322,18 @@ export async function runTester(
         verdict: "objection",
         text: out.summary,
       });
-      await board.moveIssue(issue.number, columns.blocked);
       const questions =
         out.questions.length > 0 ? out.questions : [out.summary];
       const body = [objectionComment(questions, columns.ready)];
       if (over) body.push("", objectionLimitComment(limit));
-      await board.comment(issue.number, body.join("\n"), { mention: true });
+      // 窓口があれば、質問をスレッドで確かめる
+      await blockIssue(deps, issue.number, {
+        body: body.join("\n"),
+        reason: [
+          "受け入れ条件が曖昧で、テスト役が受け入れテストを書けませんでした。次の点を教えてください。",
+          ...questions.map((q) => `- ${q}`),
+        ].join("\n"),
+      });
       return { status: "objection", questions, objections };
     }
 
@@ -383,14 +390,13 @@ export async function runTester(
         verdict: "failed",
         text: problems.join("\n"),
       });
-      await board.moveIssue(issue.number, columns.blocked);
-      await board.comment(
-        issue.number,
-        failedComment(problems, columns.ready),
-        {
-          mention: true,
-        },
-      );
+      await blockIssue(deps, issue.number, {
+        body: failedComment(problems, columns.ready),
+        reason: [
+          "テスト役が受け入れテストを正しく書けませんでした。",
+          ...problems.map((p) => `- ${p}`),
+        ].join("\n"),
+      });
       return { status: "failed", problems };
     }
   }

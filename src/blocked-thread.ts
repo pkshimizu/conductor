@@ -1,6 +1,6 @@
 /**
  * 止まったときのスレッド（窓口があるときだけ）。
- * 常駐ループが Issue を Blocked にしたら、Issue でのメンションに代えて、質問チャンネルのスレッドで人に対応を確かめる。
+ * Issue を Blocked にしたら（どの経路でも blockIssue を通す）、Issue でのメンションに代えて、質問チャンネルのスレッドで人に対応を確かめる。
  * - Blocked にしたとき、止まった理由を記録する（noteBlocked）
  * - 次の確認で、質問チャンネルにスレッドを作り、止まった理由と Issue へのリンクを書いて、許可した人にメンションする
  * - 許可した人がスレッドに方針を書いたら、方針を Issue にコメントで書き写し、Ready に戻し、スレッドをアーカイブする
@@ -104,6 +104,54 @@ export async function noteBlocked(
   await store.setBlockedThread(key, { reason });
 }
 
+/** Blocked にするときに使う GitHub の操作 */
+export type BlockBoard = BlockedThreadBoard;
+
+export interface BlockDeps {
+  config: Config;
+  store: Store;
+  board: BlockBoard;
+}
+
+/** 窓口があるときに、Blocked にしたことのコメントの最後に足す案内 */
+export function threadNote(ready: string): string {
+  return `窓口の質問チャンネルのスレッドで対応を確かめます。方針をスレッドに書くか、確認したら ${ready} 列に戻してください。`;
+}
+
+/** 止まったときに、Issue でのメンションに代えてスレッドで確かめるか（窓口を設定しているとき） */
+export function usesBlockedThreads(config: Pick<Config, "chat">): boolean {
+  return config.chat !== undefined;
+}
+
+/**
+ * Issue を Blocked にする（Blocked にするどの経路もこれを使う）。
+ * - 窓口があれば、メンションせずに止まった理由をコメントし、記録する（次の確認でスレッドを作る）
+ * - 窓口が無ければ、Issue でメンションする（Lv1 と同じ）
+ */
+export async function blockIssue(
+  deps: BlockDeps,
+  issue: number,
+  input: {
+    /** Issue に書くコメント */
+    body: string;
+    /** スレッドに書く止まった理由 */
+    reason: string;
+  },
+): Promise<void> {
+  const { config, store, board } = deps;
+  const { columns, repo } = config.github;
+  await board.moveIssue(issue, columns.blocked);
+  if (usesBlockedThreads(config)) {
+    await noteBlocked(store, { repo, issue }, input.reason);
+    await board.comment(
+      issue,
+      [input.body, "", threadNote(columns.ready)].join("\n"),
+    );
+  } else {
+    await board.comment(issue, input.body, { mention: true });
+  }
+}
+
 /**
  * 記録のある Issue のスレッドを1回分確かめる。
  * blocked は今 Blocked の列にある Issue（列から出ていれば undefined）
@@ -153,36 +201,47 @@ export async function followBlockedThread(
     return { status: "asked" };
   }
 
-  // 許可した人の書き込みを読む
   const { threadId } = record;
-  const after = await store.getReadPosition(threadId);
-  const messages = await chat.readMessages(threadId, after);
-  const self = await chat.selfId();
-  const policy = messages
-    .filter(
-      (m) =>
-        m.authorId !== self && chatConfig.allowed_users.includes(m.authorId),
-    )
-    .map((m) => m.text.trim())
-    .filter((t) => t !== "");
-  const last = messages.at(-1);
-  if (policy.length === 0) {
+  // 前の確認で方針を書き写したが、Ready に戻す途中で失敗していたら、書き写しは繰り返さない
+  if (record.copied !== true) {
+    // 許可した人の書き込みを読む
+    const after = await store.getReadPosition(threadId);
+    const messages = await chat.readMessages(threadId, after);
+    const self = await chat.selfId();
+    const policy = messages
+      .filter(
+        (m) =>
+          m.authorId !== self && chatConfig.allowed_users.includes(m.authorId),
+      )
+      .map((m) => m.text.trim())
+      .filter((t) => t !== "");
+    const last = messages.at(-1);
+    if (policy.length === 0) {
+      if (last !== undefined) await store.setReadPosition(threadId, last.id);
+      return { status: "waiting" };
+    }
+
+    await board.comment(
+      record.issue,
+      policyComment(policy.join("\n\n"), columns.ready),
+    );
+    // 書き写したことをすぐ記録する（この後で失敗しても、次の確認で同じ方針を二重に書かない）
+    await store.setBlockedThread(key, {
+      reason: record.reason,
+      threadId,
+      copied: true,
+    });
     if (last !== undefined) await store.setReadPosition(threadId, last.id);
-    return { status: "waiting" };
   }
 
-  await board.comment(
-    record.issue,
-    policyComment(policy.join("\n\n"), columns.ready),
-  );
   await board.moveIssue(record.issue, columns.ready);
-  if (last !== undefined) await store.setReadPosition(threadId, last.id);
-  await store.deleteBlockedThread(key);
   await chat.post(
     threadId,
     `方針を Issue #${record.issue} に書き写し、${columns.ready} に戻しました。このスレッドは閉じます。`,
   );
   await chat.archiveThread(threadId);
+  // 記録はアーカイブの後で消す（途中で失敗しても、次の確認でやり直せるように）
+  await store.deleteBlockedThread(key);
   deps.log(`${name}: スレッドの方針を書き写し、${columns.ready} に戻しました`);
   return { status: "resumed" };
 }

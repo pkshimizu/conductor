@@ -242,6 +242,13 @@ describe.each([
     expect(listed.map((r) => r.issue)).toEqual([1, 2]);
     expect(listed[0]?.threadId).toBeUndefined();
     expect(listed[1]?.threadId).toBe("t1");
+    expect(listed[1]?.copied).toBeUndefined();
+    await store.setBlockedThread(KEY, {
+      reason: "壊れた",
+      threadId: "t1",
+      copied: true,
+    });
+    expect((await store.getBlockedThread(KEY))?.copied).toBe(true);
     await store.deleteBlockedThread(KEY);
     expect(await store.getBlockedThread(KEY)).toBeUndefined();
     expect(await store.listBlockedThreads(KEY.repo)).toHaveLength(1);

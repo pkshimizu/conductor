@@ -333,6 +333,46 @@ describe("runTester", () => {
     expect(s.g.committed.size).toBe(0);
   });
 
+  const CHAT = [
+    "chat:",
+    "  type: discord",
+    '  channels: { requirements: "100", questions: "200", notices: "300" }',
+    '  allowed_users: ["u1"]',
+  ];
+
+  it("窓口があれば、異議の質問をメンションせずに記録し、スレッドで確かめる", async () => {
+    const objection: TesterOutput = {
+      verdict: "objection",
+      summary: "AC2 の移動先が曖昧",
+      findings: [],
+      tests: [],
+      questions: ["AC2 の「追加」ボタンはどこにありますか"],
+    };
+    const s = setup([{ output: objection }], CHAT);
+    await runTester(s.deps, ISSUE);
+    expect(s.b.moves).toEqual([[2, "Blocked"]]);
+    expect(s.b.comments[0]!.mention).toBeUndefined();
+    const record = await s.store.getBlockedThread({ repo: "me/app", issue: 2 });
+    expect(record?.reason).toContain("AC2 の「追加」ボタンはどこにありますか");
+  });
+
+  it("窓口があれば、書けなかったときもメンションせずに記録する", async () => {
+    const s = setup(
+      [
+        { output: approve(TESTS), write: {} },
+        { output: approve(TESTS), write: {} },
+      ],
+      CHAT,
+    );
+    const r = await runTester(s.deps, ISSUE);
+    expect(r.status).toBe("failed");
+    expect(s.b.comments[0]!.mention).toBeUndefined();
+    const record = await s.store.getBlockedThread({ repo: "me/app", issue: 2 });
+    expect(record?.reason).toContain(
+      "保護対象のファイルが1つも書かれていません",
+    );
+  });
+
   it("異議なら質問をコメントして Blocked に移し、回数を数える", async () => {
     const objection: TesterOutput = {
       verdict: "objection",

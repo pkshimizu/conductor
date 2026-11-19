@@ -158,6 +158,8 @@ export interface BlockedThreadRecord extends IssueKey {
   reason: string;
   /** 質問チャンネルに作ったスレッド。まだ作っていなければ undefined */
   threadId?: string;
+  /** スレッドの方針を Issue に書き写したか（Ready に戻す途中で失敗しても、二重に書き写さないため） */
+  copied?: true;
   /** 最後に更新した時刻（ISO 8601） */
   updatedAt: string;
 }
@@ -166,6 +168,7 @@ export interface BlockedThreadRecord extends IssueKey {
 export interface BlockedThreadInput {
   reason: string;
   threadId?: string;
+  copied?: true;
 }
 
 export interface Store {
@@ -210,6 +213,7 @@ export function blockedThreadRecord(
     updatedAt: now.toISOString(),
   };
   if (input.threadId !== undefined) r.threadId = input.threadId;
+  if (input.copied === true) r.copied = true;
   return r;
 }
 

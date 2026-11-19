@@ -4,6 +4,7 @@ import {
   type BlockedThreadDeps,
   blockedMessage,
   blockedThreadName,
+  blockIssue,
   followBlockedThread,
   followBlockedThreads,
   noteBlocked,
@@ -136,6 +137,121 @@ describe("followBlockedThread", () => {
     expect(t.chat.threads.get(threadId)?.archived).toBe(true);
     expect(await t.store.getBlockedThread(KEY)).toBeUndefined();
     expect(t.moves).toEqual([]);
+  });
+});
+
+describe("followBlockedThread の途中の失敗", () => {
+  /** スレッドを作り、許可した人が方針を書いたところまで進める */
+  async function withPolicy() {
+    const t = setup();
+    await noteBlocked(t.store, KEY, "壊れた");
+    await followBlockedThread(t.deps, await t.record(), ISSUE);
+    const { threadId } = await t.record();
+    if (threadId === undefined) throw new Error("スレッドが無い");
+    t.chat.addMessage(threadId, { authorId: "u1", text: "右上に置く" });
+    return { ...t, threadId };
+  }
+
+  it("アーカイブが1回失敗しても、次の確認でアーカイブし、記録を消す", async () => {
+    const t = await withPolicy();
+    const archive = t.chat.archiveThread.bind(t.chat);
+    let fails = 1;
+    t.chat.archiveThread = (id) => {
+      if (fails-- > 0) return Promise.reject(new Error("Discord が落ちた"));
+      return archive(id);
+    };
+    await expect(
+      followBlockedThread(t.deps, await t.record(), ISSUE),
+    ).rejects.toThrow("Discord が落ちた");
+    // 記録は残っている（Issue はもう Ready にある）
+    expect(t.chat.threads.get(t.threadId)?.archived).not.toBe(true);
+    const r = await followBlockedThread(t.deps, await t.record(), undefined);
+    expect(r.status).toBe("closed");
+    expect(t.chat.threads.get(t.threadId)?.archived).toBe(true);
+    expect(await t.store.getBlockedThread(KEY)).toBeUndefined();
+    expect(t.comments).toHaveLength(1);
+  });
+
+  it("Ready への移動が失敗しても、次の確認で方針を二重に書き写さずに Ready に戻す", async () => {
+    const t = await withPolicy();
+    const move = t.deps.board.moveIssue;
+    let fails = 1;
+    t.deps.board.moveIssue = (n, column) => {
+      if (fails-- > 0) return Promise.reject(new Error("GitHub が落ちた"));
+      return move(n, column);
+    };
+    await expect(
+      followBlockedThread(t.deps, await t.record(), ISSUE),
+    ).rejects.toThrow("GitHub が落ちた");
+    expect(t.comments).toHaveLength(1);
+    expect((await t.record()).copied).toBe(true);
+    const r = await followBlockedThread(t.deps, await t.record(), ISSUE);
+    expect(r.status).toBe("resumed");
+    expect(t.comments).toHaveLength(1);
+    expect(t.moves).toEqual([[7, "Ready"]]);
+    expect(t.chat.threads.get(t.threadId)?.archived).toBe(true);
+    expect(await t.store.getBlockedThread(KEY)).toBeUndefined();
+  });
+});
+
+describe("blockIssue", () => {
+  function deps(chat: boolean) {
+    const lines = [
+      `github: { repo: ${REPO}, project: 3, notify: me }`,
+      "protected: [e2e/**]",
+      "commands: { setup: s, test: t, acceptance: a, typecheck: y, build: b }",
+    ];
+    if (chat) {
+      lines.push(
+        "chat:",
+        "  type: discord",
+        '  channels: { requirements: "100", questions: "200", notices: "300" }',
+        '  allowed_users: ["u1"]',
+      );
+    }
+    const store = new MemoryStore();
+    const moves: [number, string][] = [];
+    const comments: { issue: number; body: string; mention?: boolean }[] = [];
+    return {
+      store,
+      moves,
+      comments,
+      deps: {
+        config: parseConfig(lines.join("\n")),
+        store,
+        board: {
+          moveIssue: (n: number, column: string) => {
+            moves.push([n, column]);
+            return Promise.resolve();
+          },
+          comment: (n: number, body: string, o?: { mention?: boolean }) => {
+            comments.push({ issue: n, body, ...o });
+            return Promise.resolve();
+          },
+        },
+      },
+    };
+  }
+
+  it("窓口があれば、メンションせずにコメントし、理由を記録する", async () => {
+    const t = deps(true);
+    await blockIssue(t.deps, 7, { body: "止めました", reason: "壊れた" });
+    expect(t.moves).toEqual([[7, "Blocked"]]);
+    expect(t.comments).toHaveLength(1);
+    expect(t.comments[0]?.mention).toBeUndefined();
+    expect(t.comments[0]?.body).toContain("止めました");
+    expect(t.comments[0]?.body).toContain("スレッド");
+    expect((await t.store.getBlockedThread(KEY))?.reason).toBe("壊れた");
+  });
+
+  it("窓口が無ければ、Issue でメンションし、記録しない", async () => {
+    const t = deps(false);
+    await blockIssue(t.deps, 7, { body: "止めました", reason: "壊れた" });
+    expect(t.moves).toEqual([[7, "Blocked"]]);
+    expect(t.comments).toEqual([
+      { issue: 7, body: "止めました", mention: true },
+    ]);
+    expect(await t.store.getBlockedThread(KEY)).toBeUndefined();
   });
 });
 
