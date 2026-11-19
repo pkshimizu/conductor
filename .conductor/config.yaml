@@ -1,0 +1,33 @@
+# conductor の設定（conductor 自身を conductor で開発する）
+# 点検: node dist/cli.js check <作業用の clone>
+
+github:
+  repo: pkshimizu/conductor
+  project: 20 # GitHub Projects「Conductor」
+  notify: pkshimizu # Blocked のときにメンションする人
+  # 状態欄（Status）の名前は既定どおり
+  # Ready / Testing / Implementing / Reviewing / Done / Blocked
+
+# 実装役が変えてはいけないファイル（テスト役だけが書く）
+protected:
+  - src/acceptance/**
+
+commands:
+  setup: npm ci # 依存を package-lock.json どおりに入れ直す
+  test: npm test
+  acceptance: npx vitest run src/acceptance
+  typecheck: npm run typecheck
+  build: npm run build
+  format: npm run format # コミット前に整形する（CI で整形を点検する）
+
+merge:
+  approval: auto # レビュー役が承認したらすぐマージする
+
+roles:
+  implementer:
+    # CI で lint と整形の点検をするので、実装役にも直させる
+    allow:
+      - Bash(npm run lint)
+      - Bash(npm run lint *)
+      - Bash(npm run format)
+      - Bash(npm run format:check)
