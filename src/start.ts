@@ -23,6 +23,7 @@ import { pickUp } from "./intake.js";
 import { runLoop, type LoopDeps } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
+import { checkSpecApproval } from "./spec-approval.js";
 import { runSpecifier } from "./specifier.js";
 import type { RequirementRecord, Store } from "./store.js";
 import { syncMain } from "./sync.js";
@@ -113,6 +114,14 @@ export async function buildLoopDeps(
             },
             requirement,
           );
+  const approveSpec =
+    chat === undefined
+      ? undefined
+      : (requirement: RequirementRecord) =>
+          checkSpecApproval(
+            { config, chat, store, board: github, log },
+            requirement,
+          );
 
   return {
     config,
@@ -120,6 +129,7 @@ export async function buildLoopDeps(
     board: github,
     ...(chat === undefined ? {} : { chat }),
     ...(specify === undefined ? {} : { specify }),
+    ...(approveSpec === undefined ? {} : { approveSpec }),
     log,
     pickUp: (issue) => pickUp(github, issue, config.github.columns),
     test: (issue) =>

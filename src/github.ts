@@ -265,17 +265,38 @@ export class GitHub {
 
   /** PR を squash でマージし、Issue を完了列に移す */
   async merge(pr: number, issue: number, doneColumn: string): Promise<void> {
+    await this.mergePullRequest(pr);
+    await this.moveIssue(issue, doneColumn);
+  }
+
+  /**
+   * PR を squash でマージするだけ（列は動かさない。Issue に紐づかない仕様の PR に使う）。
+   * 前の確認でマージ済みの PR は成功として扱う（途中で失敗した確認を繰り返せるように）
+   */
+  async mergePullRequest(pr: number): Promise<void> {
     const res = await this.exec(
       ["pr", "merge", String(pr), "--squash", "-R", this.repo],
       {},
     );
-    if (res.code !== 0) {
-      throw new GitHubError(
-        `PR #${pr} をマージできませんでした`,
-        res.stderr.trim(),
+    if (res.code === 0) return;
+    if (await this.isMerged(pr)) return;
+    throw new GitHubError(
+      `PR #${pr} をマージできませんでした`,
+      res.stderr.trim(),
+    );
+  }
+
+  /** PR がマージ済みか。確かめられなければ false */
+  private async isMerged(pr: number): Promise<boolean> {
+    try {
+      const res = await this.rest<{ merged?: boolean }>(
+        "GET",
+        `repos/${this.repo}/pulls/${pr}`,
       );
+      return res.merged === true;
+    } catch {
+      return false;
     }
-    await this.moveIssue(issue, doneColumn);
   }
 
   // ---- マージの承認（approval.ts） ----
