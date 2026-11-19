@@ -119,6 +119,69 @@ describe.each([
     expect(await store.summaries({ ...KEY, issue: 3 })).toEqual([]);
   });
 
+  it("記録の無い要件は undefined で、updateRequirement で既定値つきで作られる", async () => {
+    expect(await store.getRequirement("10")).toBeUndefined();
+    expect(await store.updateRequirement("10", {})).toEqual({
+      messageId: "10",
+      state: "specifying",
+      questions: 0,
+      workIssues: [],
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    });
+  });
+
+  it("updateRequirement は省略できる項目を undefined で消し、省略できない項目は undefined なら残す", async () => {
+    await store.updateRequirement("10", {
+      threadId: "11",
+      state: "working",
+      questions: 2,
+      specPr: 3,
+      workIssues: [5, 4],
+    });
+    const r = await store.updateRequirement("10", {
+      threadId: undefined,
+      specPr: undefined,
+      state: undefined,
+      questions: undefined,
+      workIssues: undefined,
+    });
+    expect(r).toEqual({
+      messageId: "10",
+      state: "working",
+      questions: 2,
+      workIssues: [5, 4],
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    });
+    expect(await store.getRequirement("10")).toEqual(r);
+  });
+
+  it("渡した workIssues を後で書き換えても記録は変わらない", async () => {
+    const issues = [1, 2];
+    await store.updateRequirement("10", { workIssues: issues });
+    issues.push(3);
+    expect((await store.getRequirement("10"))?.workIssues).toEqual([1, 2]);
+  });
+
+  it("listRequirements は投稿 ID を数として古い順に並べる", async () => {
+    await store.updateRequirement("100", {});
+    await store.updateRequirement("99", {});
+    await store.updateRequirement("1000000000000000001", {});
+    expect((await store.listRequirements()).map((r) => r.messageId)).toEqual([
+      "99",
+      "100",
+      "1000000000000000001",
+    ]);
+  });
+
+  it("読んだ位置はチャンネルごとに上書きして保存される", async () => {
+    expect(await store.getReadPosition("c")).toBeUndefined();
+    await store.setReadPosition("c", "1");
+    await store.setReadPosition("t", "5");
+    await store.setReadPosition("c", "2");
+    expect(await store.getReadPosition("c")).toBe("2");
+    expect(await store.getReadPosition("t")).toBe("5");
+  });
+
   it("list はリポジトリごとの記録を Issue 番号順に返す", async () => {
     await store.update({ ...KEY, issue: 4 }, {});
     await store.update({ ...KEY, issue: 3 }, {});

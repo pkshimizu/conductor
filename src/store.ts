@@ -71,6 +71,42 @@ export interface Summary {
   at: string;
 }
 
+/** 要件の状態 */
+export const REQUIREMENT_STATES = [
+  /** 仕様化中 */
+  "specifying",
+  /** 承認待ち */
+  "awaiting_approval",
+  /** 作業中 */
+  "working",
+  /** 完了 */
+  "done",
+] as const;
+export type RequirementState = (typeof REQUIREMENT_STATES)[number];
+
+/** 要件ごとの進み具合の記録 */
+export interface RequirementRecord {
+  /** 要件の投稿 ID（記録のキー） */
+  messageId: string;
+  /** 要件のスレッド ID */
+  threadId?: string;
+  state: RequirementState;
+  /** 質問の数 */
+  questions: number;
+  /** 仕様の PR の番号 */
+  specPr?: number;
+  /** 作業用 Issue の番号（配列の順が作業の順番） */
+  workIssues: number[];
+  /** 最後に更新した時刻（ISO 8601） */
+  updatedAt: string;
+}
+
+/** 書き換える項目。undefined を入れた省略できる項目（threadId・specPr）は消す */
+export type RequirementUpdate = {
+  [K in keyof Omit<RequirementRecord, "messageId" | "updatedAt">]?:
+    RequirementRecord[K] | undefined;
+};
+
 export interface Store {
   get(key: IssueKey): Promise<IssueRecord | undefined>;
   /** 記録が無ければ回数0で作り、指定した項目だけ書き換える。undefined を渡した項目は消す */
@@ -78,11 +114,73 @@ export interface Store {
   list(repo: string): Promise<IssueRecord[]>;
   addSummary(key: IssueKey, summary: Omit<Summary, "at">): Promise<Summary>;
   summaries(key: IssueKey): Promise<Summary[]>;
+  getRequirement(messageId: string): Promise<RequirementRecord | undefined>;
+  /** 記録が無ければ仕様化中・質問0・作業用 Issue なしで作り、指定した項目だけ書き換える */
+  updateRequirement(
+    messageId: string,
+    update: RequirementUpdate,
+  ): Promise<RequirementRecord>;
+  /** すべての要件を投稿 ID の古い順に返す */
+  listRequirements(): Promise<RequirementRecord[]>;
+  /** チャンネルまたはスレッドごとの、最後に読んだ投稿 ID */
+  getReadPosition(channelId: string): Promise<string | undefined>;
+  setReadPosition(channelId: string, messageId: string): Promise<void>;
   close(): Promise<void>;
 }
 
 export type Clock = () => Date;
 export const systemClock: Clock = () => new Date();
+
+export function emptyRequirement(
+  messageId: string,
+  now: Date,
+): RequirementRecord {
+  return {
+    messageId,
+    state: "specifying",
+    questions: 0,
+    workIssues: [],
+    updatedAt: now.toISOString(),
+  };
+}
+
+/**
+ * updateRequirement の規則を当てはめる。
+ * 省略できる項目（threadId・specPr）は undefined で消し、
+ * 省略できない項目（state・questions・workIssues）は undefined なら今の値のまま。
+ */
+export function applyRequirementUpdate(
+  record: RequirementRecord,
+  update: RequirementUpdate,
+  now: Date,
+): RequirementRecord {
+  const next: RequirementRecord = {
+    messageId: record.messageId,
+    state: update.state ?? record.state,
+    questions: update.questions ?? record.questions,
+    workIssues: [...(update.workIssues ?? record.workIssues)],
+    updatedAt: now.toISOString(),
+  };
+  const threadId = "threadId" in update ? update.threadId : record.threadId;
+  if (threadId !== undefined) next.threadId = threadId;
+  const specPr = "specPr" in update ? update.specPr : record.specPr;
+  if (specPr !== undefined) next.specPr = specPr;
+  return next;
+}
+
+/** 投稿 ID（Discord の snowflake）を古い順に並べるための比較。数字でなければ文字列で比べる */
+export function compareMessageIds(a: string, b: string): number {
+  if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+    const x = BigInt(a);
+    const y = BigInt(b);
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function cloneRequirement(r: RequirementRecord): RequirementRecord {
+  return { ...r, workIssues: [...r.workIssues] };
+}
 
 export function emptyRecord(key: IssueKey, now: Date): IssueRecord {
   return {
@@ -113,6 +211,8 @@ export function applyUpdate(
 export class MemoryStore implements Store {
   private readonly records = new Map<string, IssueRecord>();
   private readonly log = new Map<string, Summary[]>();
+  private readonly requirements = new Map<string, RequirementRecord>();
+  private readonly readPositions = new Map<string, string>();
 
   constructor(private readonly clock: Clock = systemClock) {}
 
@@ -154,6 +254,40 @@ export class MemoryStore implements Store {
     return Promise.resolve(
       (this.log.get(this.id(key)) ?? []).map((s) => ({ ...s })),
     );
+  }
+
+  getRequirement(messageId: string): Promise<RequirementRecord | undefined> {
+    const r = this.requirements.get(messageId);
+    return Promise.resolve(r && cloneRequirement(r));
+  }
+
+  updateRequirement(
+    messageId: string,
+    update: RequirementUpdate,
+  ): Promise<RequirementRecord> {
+    const now = this.clock();
+    const current =
+      this.requirements.get(messageId) ?? emptyRequirement(messageId, now);
+    const next = applyRequirementUpdate(current, update, now);
+    this.requirements.set(messageId, next);
+    return Promise.resolve(cloneRequirement(next));
+  }
+
+  listRequirements(): Promise<RequirementRecord[]> {
+    return Promise.resolve(
+      [...this.requirements.values()]
+        .sort((a, b) => compareMessageIds(a.messageId, b.messageId))
+        .map(cloneRequirement),
+    );
+  }
+
+  getReadPosition(channelId: string): Promise<string | undefined> {
+    return Promise.resolve(this.readPositions.get(channelId));
+  }
+
+  setReadPosition(channelId: string, messageId: string): Promise<void> {
+    this.readPositions.set(channelId, messageId);
+    return Promise.resolve();
   }
 
   close(): Promise<void> {
