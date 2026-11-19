@@ -236,6 +236,71 @@ describe("tick の分解", () => {
   });
 });
 
+describe("tick の着手と完了", () => {
+  it("スレッドがあり作業中で作業用 Issue がある要件だけに progress を呼び、失敗しても Issue の処理は止めない", async () => {
+    const t = setup({ Ready: [3] });
+    await t.store.updateRequirement("10", {
+      threadId: "t10",
+      state: "working",
+      workIssues: [5],
+    });
+    await t.store.updateRequirement("11", {
+      threadId: "t11",
+      state: "working",
+    });
+    await t.store.updateRequirement("12", {
+      state: "working",
+      workIssues: [6],
+    });
+    await t.store.updateRequirement("13", {
+      threadId: "t13",
+      state: "done",
+      workIssues: [7],
+    });
+    await t.store.updateRequirement("14", {
+      threadId: "t14",
+      state: "working",
+      workIssues: [8],
+    });
+    const seen: string[] = [];
+    const deps: LoopDeps = {
+      ...t.deps,
+      progress: (r) => {
+        seen.push(r.messageId);
+        return r.messageId === "10"
+          ? Promise.reject(new Error("Issue を読めない"))
+          : Promise.resolve({ status: "waiting" });
+      },
+    };
+    await tick(deps, newLoopState());
+    expect(seen).toEqual(["10", "14"]);
+    expect(t.calls).toEqual(["pickUp #3", "test #3"]);
+    expect(t.logs.some((l) => l.includes("Issue を読めない"))).toBe(true);
+  });
+
+  it("分解した要件を、同じ確認で確かめる", async () => {
+    const t = setup({});
+    await t.store.updateRequirement("10", {
+      threadId: "t10",
+      state: "working",
+    });
+    const seen: string[] = [];
+    const deps: LoopDeps = {
+      ...t.deps,
+      decompose: async (r) => {
+        await t.store.updateRequirement(r.messageId, { workIssues: [5] });
+        return { status: "decomposed" };
+      },
+      progress: (r) => {
+        seen.push(`${r.messageId} ${r.workIssues.join(",")}`);
+        return Promise.resolve({ status: "started" });
+      },
+    };
+    await tick(deps, newLoopState());
+    expect(seen).toEqual(["10 5"]);
+  });
+});
+
 describe("tick", () => {
   it("作業中の Issue が無ければ、Ready の番号が小さいものを1件拾って進める", async () => {
     const t = setup({ Ready: [5, 3] });

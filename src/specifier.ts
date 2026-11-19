@@ -12,6 +12,7 @@ import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import type { Config } from "./config.js";
 import type { Git } from "./git.js";
 import { matchesAny } from "./git.js";
+import { requirementTextFrom } from "./requirement-text.js";
 import { threadName } from "./requirements.js";
 import {
   compareMessageIds,
@@ -170,14 +171,6 @@ export function unwrittenMessage(summary: string): string {
   ].join("\n");
 }
 
-/** 引用の形（"> "）を外す */
-function unquote(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .map((l) => l.replace(/^> ?/, ""))
-    .join("\n");
-}
-
 /** 書き手の表示。Bot でも許可した人でもなければ undefined（プロンプトに入れない） */
 function speaker(
   message: ChatMessage,
@@ -270,14 +263,13 @@ export async function runSpecifier(
   // 要件の本文は、スレッドの Bot の最初の書き込み（受け取りのときに書いた引用）。
   // 他の人の書き込みを要件として渡さない。取れなければ起動しない
   const botId = await chat.selfId();
-  const quoted = thread.find((m) => m.authorId === botId);
-  if (quoted === undefined) {
+  const requirementText = requirementTextFrom(thread, botId);
+  if (requirementText === undefined) {
     deps.log(
       `要件 ${requirement.messageId}: スレッドに要件の引用が無いので仕様化しません`,
     );
     return { status: "skipped" };
   }
-  const requirementText = unquote(quoted.text);
   const branch = specBranch(requirement.messageId);
   const pr =
     requirement.specPr === undefined
@@ -289,15 +281,16 @@ export async function runSpecifier(
     // PR があればそのブランチの続きから、無ければ main から作る
     if (requirement.specPr === undefined) await git.startBranch(branch);
     else await git.startBranch(branch, branch);
-    return await specify(threadId);
+    return await specify(threadId, requirementText);
   } finally {
     // 失敗したときも、作業ツリーに変更を残さない
     await git.discardAll();
   }
 
-  // 関数の宣言では threadId の絞り込みが効かないので、引数で受け取る
+  // 関数の宣言では threadId・requirementText の絞り込みが効かないので、引数で受け取る
   async function specify(
     threadId: string,
+    requirementText: string,
   ): Promise<{ status: SpecifierStatus }> {
     const result = await deps.run({
       role: "specifier",
