@@ -52,14 +52,21 @@ export interface IssueRecord extends IssueKey {
   checkpoint?: Checkpoint;
   /** テスト役の完了時に記録した、受け入れテスト・seed・.conductor/ のハッシュ */
   protectedHash?: string;
+  /**
+   * 今の段階（checkpoint.stage）を始めた時刻（ISO 8601）。
+   * store の update が、checkpoint.stage が変わったときだけ入れる（同じ段階の書き直し・再開では変えない）
+   */
+  stageStartedAt?: string;
   /** 最後に更新した時刻（ISO 8601） */
   updatedAt: string;
 }
 
+/** update で書き換えない項目（store が入れる） */
+type StoreManagedKey = "repo" | "issue" | "updatedAt" | "stageStartedAt";
+
 /** 書き換える項目。undefined を入れた項目は消す */
 export type IssueUpdate = {
-  [K in keyof Omit<IssueRecord, "repo" | "issue" | "updatedAt">]?:
-    IssueRecord[K] | undefined;
+  [K in keyof Omit<IssueRecord, StoreManagedKey>]?: IssueRecord[K] | undefined;
 };
 
 /** 各役の結果の要約 */
@@ -307,7 +314,11 @@ export function emptyRecord(key: IssueKey, now: Date): IssueRecord {
   };
 }
 
-/** update の規則（undefined は削除）を当てはめる */
+/**
+ * update の規則（undefined は削除）を当てはめる。
+ * checkpoint.stage が今の記録と変わったとき（または段階を始めた時刻が無いとき）だけ、
+ * stageStartedAt を now にする。checkpoint を消したら stageStartedAt も消す
+ */
 export function applyUpdate(
   record: IssueRecord,
   update: IssueUpdate,
@@ -315,11 +326,22 @@ export function applyUpdate(
 ): IssueRecord {
   const next: Record<string, unknown> = { ...record };
   for (const [k, v] of Object.entries(update)) {
+    if (k === "stageStartedAt") continue;
     if (v === undefined) delete next[k];
     else next[k] = v;
   }
-  next.updatedAt = now.toISOString();
-  return next as unknown as IssueRecord;
+  const result = next as unknown as IssueRecord;
+  result.updatedAt = now.toISOString();
+  const stage = result.checkpoint?.stage;
+  if (stage === undefined) {
+    delete result.stageStartedAt;
+  } else if (
+    stage !== record.checkpoint?.stage ||
+    record.stageStartedAt === undefined
+  ) {
+    result.stageStartedAt = now.toISOString();
+  }
+  return result;
 }
 
 /** テスト用のメモリ上の実装 */
