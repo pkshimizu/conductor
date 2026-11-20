@@ -61,8 +61,33 @@ describe.each([
         resumeAt: "2026-11-15T05:00:00.000Z",
       },
       protectedHash: "sha256:abc",
+      stageStartedAt: "2026-11-15T00:00:00.000Z",
       updatedAt: "2026-11-15T00:00:00.000Z",
     });
+  });
+
+  it("段階が変わったときだけ stageStartedAt を入れ、checkpoint を消すと stageStartedAt も消す", async () => {
+    expect((await store.update(KEY, {})).stageStartedAt).toBeUndefined();
+    clock.advance(1000);
+    const testing = await store.update(KEY, {
+      checkpoint: { stage: "testing" },
+    });
+    expect(testing.stageStartedAt).toBe("2026-11-15T00:00:01.000Z");
+    clock.advance(1000);
+    const same = await store.update(KEY, {
+      checkpoint: { stage: "testing", reason: "usage-limit" },
+    });
+    expect(same.stageStartedAt).toBe("2026-11-15T00:00:01.000Z");
+    expect(same.updatedAt).toBe("2026-11-15T00:00:02.000Z");
+    clock.advance(1000);
+    const cleared = await store.update(KEY, { checkpoint: undefined });
+    expect("stageStartedAt" in cleared).toBe(false);
+    expect((await store.get(KEY))?.stageStartedAt).toBeUndefined();
+    clock.advance(1000);
+    const again = await store.update(KEY, {
+      checkpoint: { stage: "testing" },
+    });
+    expect(again.stageStartedAt).toBe("2026-11-15T00:00:04.000Z");
   });
 
   it("update は指定した項目だけ変え、undefined の項目は消す", async () => {
@@ -431,5 +456,45 @@ describe("SqliteStore の再起動", () => {
     const reopened = new SqliteStore(file);
     expect((await reopened.getBlockedThread(KEY))?.respec).toEqual(respec);
     await reopened.close();
+  });
+
+  it("段階を始めた時刻の列が無い前の版の issues でも、記録を壊さずに列を足す", async () => {
+    const file = join(dir, "old-issues.sqlite");
+    const old = new DatabaseSync(file);
+    old.exec(`CREATE TABLE issues (
+      repo TEXT NOT NULL,
+      issue INTEGER NOT NULL,
+      rejections INTEGER NOT NULL DEFAULT 0,
+      objections INTEGER NOT NULL DEFAULT 0,
+      branch TEXT,
+      pr INTEGER,
+      checkpoint TEXT,
+      protected_hash TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (repo, issue)
+    )`);
+    old
+      .prepare(
+        "INSERT INTO issues (repo, issue, checkpoint, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(
+        KEY.repo,
+        KEY.issue,
+        JSON.stringify({ stage: "ci" }),
+        "2026-11-14T00:00:00.000Z",
+      );
+    old.close();
+
+    const store = new SqliteStore(file, fixedClock());
+    expect(await store.get(KEY)).toEqual({
+      ...KEY,
+      rejections: 0,
+      objections: 0,
+      checkpoint: { stage: "ci" },
+      updatedAt: "2026-11-14T00:00:00.000Z",
+    });
+    const r = await store.update(KEY, { checkpoint: { stage: "ci" } });
+    expect(r.stageStartedAt).toBe("2026-11-15T00:00:00.000Z");
+    await store.close();
   });
 });

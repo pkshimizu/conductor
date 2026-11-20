@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS issues (
   pr INTEGER,
   checkpoint TEXT,
   protected_hash TEXT,
+  stage_started_at TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (repo, issue)
 );
@@ -135,6 +136,11 @@ interface AddedColumn {
   type: string;
 }
 
+/** 前の版で作った issues に無い列を足す */
+const ADDED_ISSUE_COLUMNS: readonly AddedColumn[] = [
+  { name: "stage_started_at", type: "TEXT" },
+];
+
 /** 前の版で作ったファイルに無い列を足す（既存の記録は壊さない） */
 const ADDED_REQUIREMENT_COLUMNS: readonly { name: string; type: string }[] = [
   { name: "decomposition", type: "TEXT" },
@@ -225,6 +231,7 @@ interface IssueRow {
   pr: number | null;
   checkpoint: string | null;
   protected_hash: string | null;
+  stage_started_at: string | null;
   updated_at: string;
 }
 
@@ -241,6 +248,7 @@ function fromRow(row: IssueRow): IssueRecord {
   if (row.checkpoint !== null)
     r.checkpoint = JSON.parse(row.checkpoint) as Checkpoint;
   if (row.protected_hash !== null) r.protectedHash = row.protected_hash;
+  if (row.stage_started_at !== null) r.stageStartedAt = row.stage_started_at;
   return r;
 }
 
@@ -260,6 +268,7 @@ export class SqliteStore implements Store {
   }
 
   private addMissingColumns(): void {
+    this.addColumns("issues", ADDED_ISSUE_COLUMNS);
     this.addColumns("requirements", ADDED_REQUIREMENT_COLUMNS);
     this.addColumns("blocked_threads", ADDED_BLOCKED_THREAD_COLUMNS);
   }
@@ -293,8 +302,8 @@ export class SqliteStore implements Store {
     this.db
       .prepare(
         `INSERT INTO issues
-           (repo, issue, rejections, objections, branch, pr, checkpoint, protected_hash, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (repo, issue, rejections, objections, branch, pr, checkpoint, protected_hash, stage_started_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, issue) DO UPDATE SET
            rejections = excluded.rejections,
            objections = excluded.objections,
@@ -302,6 +311,7 @@ export class SqliteStore implements Store {
            pr = excluded.pr,
            checkpoint = excluded.checkpoint,
            protected_hash = excluded.protected_hash,
+           stage_started_at = excluded.stage_started_at,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -313,6 +323,7 @@ export class SqliteStore implements Store {
         next.pr ?? null,
         next.checkpoint ? JSON.stringify(next.checkpoint) : null,
         next.protectedHash ?? null,
+        next.stageStartedAt ?? null,
         next.updatedAt,
       );
     return next;
