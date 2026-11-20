@@ -80,6 +80,8 @@ export interface LoopDeps {
   respec?: RespecDeps;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** 稼働状態が変わったときに呼ぶ（確認している間は "running"、次の確認を待つ間は "idle"）。管理画面に知らせるために start.ts がつなぐ */
+  onStatus?: (status: "running" | "idle") => void;
 }
 
 /** ループの間だけ持つ状態 */
@@ -453,6 +455,7 @@ export async function runLoop(
   const sleep = deps.sleep ?? abortableSleep;
   deps.log(`開始しました（${Math.round(interval / 1000)} 秒ごとに確認）`);
   while (!signal.aborted) {
+    deps.onStatus?.("running");
     try {
       await tick(deps, state);
     } catch (e) {
@@ -461,6 +464,7 @@ export async function runLoop(
       );
     }
     if (signal.aborted) break;
+    deps.onStatus?.("idle");
     await sleep(interval, signal);
   }
   deps.log("止まりました");

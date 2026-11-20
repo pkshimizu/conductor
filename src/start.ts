@@ -4,6 +4,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { startAdminServer } from "./admin-server.js";
 import { mergeApproved } from "./approval.js";
 import { type ClaudeDeps, realDeps, runRole, withLanguage } from "./claude.js";
 import type { Chat } from "./chat.js";
@@ -211,7 +212,10 @@ export async function buildLoopDeps(
   };
 }
 
-/** 常駐して Issue を進める。Ctrl+C を受けたら、今の段階を終えてから止まる */
+/**
+ * 常駐して Issue を進める。同じプロセスから管理画面も配信し、稼働状態を知らせる。
+ * Ctrl+C を受けたら、今の段階を終えてから止まる
+ */
 export async function start(
   repoDir: string,
   config: Config,
@@ -226,10 +230,22 @@ export async function start(
   };
   process.on("SIGINT", onSigint);
   try {
-    await runLoop(
-      await buildLoopDeps(repoDir, config, store, log),
-      controller.signal,
-    );
+    const admin = await startAdminServer({
+      repo: config.github.repo,
+      project: config.github.project,
+      status: "running",
+      log,
+    });
+    try {
+      const deps = await buildLoopDeps(repoDir, config, store, log);
+      await runLoop(
+        { ...deps, onStatus: (status) => admin.setStatus(status) },
+        controller.signal,
+      );
+      admin.setStatus("stopped");
+    } finally {
+      await admin.close();
+    }
   } finally {
     process.off("SIGINT", onSigint);
     await store.close();
