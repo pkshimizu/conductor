@@ -484,6 +484,29 @@ describe("runLoop", () => {
     expect(n).toBe(2);
     expect(t.logs.filter((l) => l.includes("通信エラー"))).toHaveLength(2);
   });
+
+  it("確認している間は running、次の確認を待つ間は idle を知らせる", async () => {
+    const t = setup({});
+    const controller = new AbortController();
+    const statuses: string[] = [];
+    t.deps.onStatus = (status) => statuses.push(status);
+    t.deps.sleep = () => {
+      statuses.push("sleep");
+      if (statuses.filter((s) => s === "sleep").length >= 2) {
+        controller.abort();
+      }
+      return Promise.resolve();
+    };
+    await runLoop(t.deps, controller.signal, { intervalMs: 1000 });
+    expect(statuses).toEqual([
+      "running",
+      "idle",
+      "sleep",
+      "running",
+      "idle",
+      "sleep",
+    ]);
+  });
 });
 
 describe("storeFile", () => {

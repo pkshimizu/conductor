@@ -9,6 +9,11 @@ export default defineConfig([
   js.configs.recommended,
   tseslint.configs.recommended,
   { languageOptions: { globals: globals.node } },
+  // 管理画面（web/src）はブラウザで動く
+  {
+    files: ["web/src/**/*.{ts,tsx}"],
+    languageOptions: { globals: globals.browser },
+  },
   // 整形は Prettier に任せる。ESLint の書式ルールと競合しないよう最後に置く
   prettier,
 ]);
