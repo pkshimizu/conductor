@@ -7,8 +7,8 @@
  * - タスクリストの印は入力欄にせず ☐ / ☑ の文字で見せる
  * 色はすべてテーマの CSS 変数（palette.ts の themeStyle）を使う
  */
-import type { CSSProperties, ReactElement } from "react";
-import Markdown, { type Components } from "react-markdown";
+import type { ComponentProps, CSSProperties, ReactElement } from "react";
+import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Messages } from "./i18n.js";
 
@@ -123,7 +123,9 @@ function components(firstLine: number): Components {
     node?.position?.start.line === firstLine ? 0 : gap;
 
   const heading =
-    (Tag: keyof typeof HEADING_SIZES): Components["h1"] =>
+    (
+      Tag: keyof typeof HEADING_SIZES,
+    ): ((props: ComponentProps<"h1"> & ExtraProps) => ReactElement) =>
     ({ node, children }) => {
       const underline = Tag === "h1" || Tag === "h2";
       const style: CSSProperties = {
