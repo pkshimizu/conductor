@@ -2,7 +2,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
+import { type IntakeBoard, pickUp } from "./intake.js";
 import { PartialWorkAbortError } from "./partial-work.js";
+import { cachedStatusOf } from "./progress.js";
 import {
   abortComment,
   abortReason,
@@ -14,6 +16,7 @@ import {
   type LoopDeps,
   type LoopIssue,
   type StepResult,
+  waitingMessage,
 } from "./loop.js";
 import { storeFile } from "./start.js";
 import { MemoryStore, type Stage } from "./store.js";
@@ -27,7 +30,12 @@ const issue = (number: number): LoopIssue => ({
 
 function setup(
   columns: Record<string, number[]>,
-  options: { conflict?: boolean; pickUp?: boolean } = {},
+  options: {
+    conflict?: boolean;
+    pickUp?: boolean;
+    /** Issue ごとの、まだ開いている「先に済ませる Issue」（あれば入口確認は待つ） */
+    waiting?: Record<number, number[]>;
+  } = {},
 ) {
   const config = parseConfig(
     [
@@ -74,6 +82,10 @@ function setup(
     },
     pickUp: (i) => {
       calls.push(`pickUp #${i.number}`);
+      const waiting = options.waiting?.[i.number];
+      if (waiting !== undefined) {
+        return Promise.resolve({ accepted: false, waiting });
+      }
       return Promise.resolve({ accepted: options.pickUp ?? true });
     },
     test: step("test"),
@@ -320,6 +332,92 @@ describe("tick", () => {
     const t = setup({ Ready: [3] }, { pickUp: false });
     await tick(t.deps, newLoopState());
     expect(t.calls).toEqual(["pickUp #3"]);
+  });
+
+  it("入口確認で断られたら（Blocked にしたら）、次の Ready はこの確認では拾わない", async () => {
+    const t = setup({ Ready: [3, 4] }, { pickUp: false });
+    await tick(t.deps, newLoopState());
+    expect(t.calls).toEqual(["pickUp #3"]);
+  });
+
+  it("先に済ませる Issue を待つ Issue は Ready に残し、並び順で次の Issue を確かめて始める", async () => {
+    const t = setup({ Ready: [5, 3, 4] }, { waiting: { 3: [1] } });
+    const state = newLoopState();
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["pickUp #3", "pickUp #4", "test #4"]);
+    // 待っている Issue は処理中に数えない（中断を受け付けない）
+    expect(state.steps.abort(3)).toBe(false);
+    expect(
+      t.logs.some((l) => l.includes("着手できる Issue がありません")),
+    ).toBe(false);
+  });
+
+  it("同じ先に済ませる Issue を待つ Ready の Issue が複数あっても、1回の確認での問い合わせは番号ごとに1回", async () => {
+    const t = setup({ Ready: [10, 11, 12] });
+    const body = [
+      "## 目的",
+      "目的",
+      "## 受け入れ条件（AC）",
+      "- AC1",
+      "  - Given 前提",
+      "  - When 操作",
+      "  - Then 結果",
+      "## 画面の URL・文言",
+      "なし",
+      "## 対象外",
+      "なし",
+      "## 先に済ませる Issue",
+      "- #5",
+    ].join("\n");
+    const asked: number[] = [];
+    const board: IntakeBoard = {
+      moveIssue: () => Promise.resolve(),
+      comment: () => Promise.resolve(),
+      workIssueStatus: (n) => {
+        asked.push(n);
+        return Promise.resolve({ body: "", closed: false });
+      },
+    };
+    const deps: LoopDeps = {
+      ...t.deps,
+      board: {
+        ...t.deps.board,
+        issuesByColumn: () =>
+          Promise.resolve(
+            new Map([
+              ["Ready", [10, 11, 12].map((n) => ({ ...issue(n), body }))],
+            ]),
+          ),
+      },
+      pickUp: (i, cache) =>
+        pickUp(
+          { config: t.deps.config, store: t.store, board, log: () => {} },
+          i,
+          cachedStatusOf(board, cache),
+        ),
+    };
+    await tick(deps, newLoopState());
+    expect(asked).toEqual([5]);
+    // 次の確認では問い合わせ直す（閉じたかもしれないので）
+    await tick(deps, newLoopState());
+    expect(asked).toEqual([5, 5]);
+  });
+
+  it("どれも着手できなければ何も始めず、待っている Issue と開いている番号をログに出す", async () => {
+    const t = setup({ Ready: [3, 4] }, { waiting: { 3: [1], 4: [1, 2] } });
+    await tick(t.deps, newLoopState());
+    expect(t.calls).toEqual(["pickUp #3", "pickUp #4"]);
+    expect(t.moves).toEqual([]);
+    expect(t.comments).toEqual([]);
+    expect(t.logs).toContain(
+      waitingMessage("Ready", [
+        { issue: 3, waiting: [1] },
+        { issue: 4, waiting: [1, 2] },
+      ]),
+    );
+    expect(waitingMessage("Ready", [{ issue: 4, waiting: [1, 2] }])).toContain(
+      "#4: #1、#2 がまだ開いています",
+    );
   });
 
   it("作業中の Issue があれば、それだけを1段階進め、Ready は拾わない", async () => {

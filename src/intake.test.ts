@@ -5,11 +5,15 @@ import { parseConfig } from "./config.js";
 import { MemoryStore } from "./store.js";
 import {
   checkIssueBody,
+  missingPrerequisiteProblem,
   parseSections,
   pickUp,
   REQUIRED_SECTIONS,
   type IntakeBoard,
 } from "./intake.js";
+import type { WorkIssueStatus } from "./progress.js";
+
+const log = () => {};
 
 const COMPLETE = `### 目的
 
@@ -58,9 +62,13 @@ function makeConfig(options: { chat?: boolean; testing?: string } = {}) {
   return parseConfig(lines.join("\n"));
 }
 
-function fakeBoard() {
+function fakeBoard(statuses: Record<number, WorkIssueStatus> = {}) {
   const calls: string[] = [];
   const board: IntakeBoard = {
+    workIssueStatus: (n) => {
+      calls.push(`status #${n}`);
+      return Promise.resolve(statuses[n]);
+    },
     moveIssue: (n, column) => {
       calls.push(`move #${n} ${column}`);
       return Promise.resolve();
@@ -166,7 +174,7 @@ describe("AC2: 書き漏れのある Issue を拾おうとする", () => {
     const store = new MemoryStore();
     const body = COMPLETE.replace(/### 目的[\s\S]*?(?=### 受け入れ)/, "");
     const result = await pickUp(
-      { config: makeConfig(), store, board },
+      { config: makeConfig(), store, board, log },
       { number: 7, body },
     );
     expect(result).toEqual({
@@ -186,7 +194,7 @@ describe("AC2: 書き漏れのある Issue を拾おうとする", () => {
     const store = new MemoryStore();
     const body = COMPLETE.replace(/### 目的[\s\S]*?(?=### 受け入れ)/, "");
     await pickUp(
-      { config: makeConfig({ chat: true }), store, board },
+      { config: makeConfig({ chat: true }), store, board, log },
       { number: 7, body },
     );
     expect(calls[0]).toBe("move #7 Blocked");
@@ -205,10 +213,80 @@ describe("AC3: そろった Issue を拾う", () => {
         config: makeConfig({ testing: "テスト中" }),
         store: new MemoryStore(),
         board,
+        log,
       },
       { number: 3, body: COMPLETE },
     );
     expect(result).toEqual({ accepted: true });
     expect(calls).toEqual(["move #3 テスト中"]);
+  });
+});
+
+describe("先に済ませる Issue の確認", () => {
+  const withPrerequisites = (list: string) =>
+    `${COMPLETE}\n\n### 先に済ませる Issue\n\n${list}\n`;
+
+  it("まだ開いている Issue があれば、動かさずコメントもせずに待つ（自分自身は無視する）", async () => {
+    const { board, calls } = fakeBoard({
+      5: { body: "", closed: true },
+      6: { body: "" },
+    });
+    const logs: string[] = [];
+    const result = await pickUp(
+      {
+        config: makeConfig(),
+        store: new MemoryStore(),
+        board,
+        log: (t) => logs.push(t),
+      },
+      { number: 3, body: withPrerequisites("- #3\n- #5\n- #6") },
+    );
+    expect(result).toEqual({ accepted: false, waiting: [6] });
+    expect(calls).toEqual(["status #5", "status #6"]);
+    expect(logs.some((l) => l.includes("#3") && l.includes("#6"))).toBe(true);
+  });
+
+  it("すべて閉じていればテスト役の列に進める", async () => {
+    const { board, calls } = fakeBoard({
+      5: { body: "", closed: true },
+      6: { body: "", merged: { number: 9, url: "u" } },
+    });
+    const result = await pickUp(
+      { config: makeConfig(), store: new MemoryStore(), board, log },
+      { number: 3, body: withPrerequisites("- #5\n- #6") },
+    );
+    expect(result).toEqual({ accepted: true });
+    expect(calls).toEqual(["status #5", "status #6", "move #3 Testing"]);
+  });
+
+  it("リポジトリに無い番号があれば、開いている Issue があっても Blocked に移してその番号をコメントする", async () => {
+    const { board, calls } = fakeBoard({ 6: { body: "" } });
+    const result = await pickUp(
+      { config: makeConfig(), store: new MemoryStore(), board, log },
+      { number: 3, body: withPrerequisites("- #6\n- #99") },
+    );
+    expect(result).toEqual({
+      accepted: false,
+      problems: [missingPrerequisiteProblem(99)],
+    });
+    expect(calls[2]).toBe("move #3 Blocked");
+    expect(calls[3]).toContain("#99");
+  });
+
+  it("書き漏れがあれば、先に済ませる Issue を問い合わせずに Blocked に移す", async () => {
+    const { board, calls } = fakeBoard({ 6: { body: "" } });
+    const body = withPrerequisites("- #6").replace(
+      /### 目的[\s\S]*?(?=### 受け入れ)/,
+      "",
+    );
+    const result = await pickUp(
+      { config: makeConfig(), store: new MemoryStore(), board, log },
+      { number: 3, body },
+    );
+    expect(result).toEqual({
+      accepted: false,
+      problems: ["「目的」の見出しがありません"],
+    });
+    expect(calls[0]).toBe("move #3 Blocked");
   });
 });

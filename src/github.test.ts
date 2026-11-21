@@ -352,20 +352,24 @@ describe("分解役に使う API", () => {
 });
 
 describe("着手と完了に使う API", () => {
-  function statusHandler(issue: unknown) {
+  function statusHandler(issue: unknown, errors?: unknown[]) {
     return (_: string[], input: string) => {
       const { query: q } = query(input);
       if (q.includes("projectV2(number")) return ok({ data: META });
       if (q.includes("closedByPullRequestsReferences"))
-        return ok({ data: { repository: { issue } } });
+        return ok({
+          data: { repository: { issue } },
+          ...(errors === undefined ? {} : { errors }),
+        });
       return undefined;
     };
   }
 
-  it("この Project の列・本文・マージ済みの PR を返す", async () => {
+  it("この Project の列・本文・マージ済みの PR・閉じているかを返す", async () => {
     const { gh, calls } = fakeGh(
       statusHandler({
         body: "本文",
+        state: "CLOSED",
         projectItems: {
           nodes: [
             { project: { id: "P9" }, fieldValueByName: { name: "Testing" } },
@@ -384,6 +388,7 @@ describe("着手と完了に使う API", () => {
       body: "本文",
       column: "Done",
       merged: { number: 31, url: "https://x/pull/31" },
+      closed: true,
     });
     expect(query(calls.at(-1)!.input).variables).toEqual({
       owner: "me",
@@ -397,18 +402,36 @@ describe("着手と完了に使う API", () => {
     const { gh } = fakeGh(
       statusHandler({
         body: "本文",
+        state: "OPEN",
         projectItems: {
           nodes: [{ project: { id: "P1" }, fieldValueByName: null }],
         },
         closedByPullRequestsReferences: { nodes: [] },
       }),
     );
-    expect(await gh.workIssueStatus(7)).toEqual({ body: "本文" });
+    expect(await gh.workIssueStatus(7)).toEqual({
+      body: "本文",
+      closed: false,
+    });
   });
 
-  it("Issue が無ければ失敗する", async () => {
-    const { gh } = fakeGh(statusHandler(null));
-    await expect(gh.workIssueStatus(7)).rejects.toThrow("#7");
+  it("リポジトリに無い番号なら undefined を返す（NOT_FOUND のエラーは失敗にしない）", async () => {
+    const { gh } = fakeGh(
+      statusHandler(null, [
+        {
+          type: "NOT_FOUND",
+          message: "Could not resolve to an Issue with the number of 7.",
+        },
+      ]),
+    );
+    expect(await gh.workIssueStatus(7)).toBeUndefined();
+  });
+
+  it("NOT_FOUND 以外のエラーなら失敗する", async () => {
+    const { gh } = fakeGh(
+      statusHandler(null, [{ type: "FORBIDDEN", message: "denied" }]),
+    );
+    await expect(gh.workIssueStatus(7)).rejects.toThrow("GraphQL");
   });
 });
 

@@ -259,16 +259,24 @@ export class GitHub {
    * 作業用 Issue 1件の今の様子（この Project の状態欄・本文・この Issue を閉じたマージ済みの PR）。
    * 閉じた Issue でも取れる
    */
-  async workIssueStatus(issue: number): Promise<WorkIssueStatus> {
+  async workIssueStatus(issue: number): Promise<WorkIssueStatus | undefined> {
     const { projectId } = await this.loadMeta();
-    const data = await this.graphql<IssueStatusResult>(ISSUE_STATUS_QUERY, {
-      owner: this.owner,
-      name: this.name,
-      number: issue,
-      field: STATUS_FIELD,
-    });
-    const node = data.repository?.issue;
-    if (!node) throw new GitHubError(`Issue #${issue} が見つかりません`);
+    const data = await this.graphql<IssueStatusResult>(
+      ISSUE_STATUS_QUERY,
+      {
+        owner: this.owner,
+        name: this.name,
+        number: issue,
+        field: STATUS_FIELD,
+      },
+      { allowNotFound: true },
+    );
+    if (!data.repository) {
+      throw new GitHubError(`リポジトリ ${this.repo} が見つかりません`);
+    }
+    // リポジトリに無い番号（PR の番号を含む）
+    const node = data.repository.issue;
+    if (!node) return undefined;
     const item = node.projectItems.nodes.find(
       (i) => i.project.id === projectId,
     );
@@ -282,6 +290,7 @@ export class GitHub {
       ...(merged === undefined
         ? {}
         : { merged: { number: merged.number, url: merged.url } }),
+      closed: node.state === "CLOSED",
     };
   }
 
@@ -530,21 +539,29 @@ export class GitHub {
   async graphql<T>(
     query: string,
     variables: Record<string, unknown>,
-    options: { allowErrors?: boolean } = {},
+    options: {
+      allowErrors?: boolean;
+      /** 見つからない（type が NOT_FOUND の）エラーだけなら失敗にしない */
+      allowNotFound?: boolean;
+    } = {},
   ): Promise<T> {
     const res = await this.exec(["api", "graphql", "--input", "-"], {
       input: JSON.stringify({ query, variables }),
     });
-    let parsed: { data?: T; errors?: { message: string }[] } | undefined;
+    let parsed:
+      { data?: T; errors?: { message: string; type?: string }[] } | undefined;
     try {
       parsed = res.stdout.trim() ? JSON.parse(res.stdout) : undefined;
     } catch {
       parsed = undefined;
     }
-    if (parsed?.errors?.length && !options.allowErrors) {
+    const errors = (parsed?.errors ?? []).filter(
+      (e) => !(options.allowNotFound === true && e.type === "NOT_FOUND"),
+    );
+    if (errors.length > 0 && !options.allowErrors) {
       throw new GitHubError(
         "GitHub GraphQL がエラーを返しました",
-        parsed.errors.map((e) => e.message).join("\n"),
+        errors.map((e) => e.message).join("\n"),
       );
     }
     if (!parsed?.data && !options.allowErrors) {
@@ -692,6 +709,7 @@ interface IssueStatusResult {
   repository: {
     issue: {
       body: string;
+      state: "OPEN" | "CLOSED";
       projectItems: {
         nodes: {
           project: { id: string };
@@ -710,6 +728,7 @@ query($owner: String!, $name: String!, $number: Int!, $field: String!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
       body
+      state
       projectItems(first: 50) {
         nodes {
           project { id }

@@ -1,6 +1,12 @@
 import { blockIssue } from "./blocked-thread.js";
 import type { Config } from "./config.js";
 import type { GitHub } from "./github.js";
+import {
+  cachedStatusOf,
+  type ProgressBoard,
+  prerequisiteState,
+  type WorkIssueStatus,
+} from "./progress.js";
 import type { Store } from "./store.js";
 
 /**
@@ -108,31 +114,63 @@ export function checkIssueBody(body: string): string[] {
 }
 
 /** 入口確認で使う GitHub の操作 */
-export type IntakeBoard = Pick<GitHub, "moveIssue" | "comment">;
+export type IntakeBoard = Pick<GitHub, "moveIssue" | "comment"> &
+  Pick<ProgressBoard, "workIssueStatus">;
 
 export type IntakeResult =
-  { accepted: true } | { accepted: false; problems: string[] };
+  /** 始めた（テスト役の列に移した） */
+  | { accepted: true }
+  /** Blocked にした */
+  | { accepted: false; problems: string[] }
+  /** 待つ（Ready に残す）。waiting はまだ開いている「先に済ませる Issue」 */
+  | { accepted: false; waiting: number[] };
 
 export interface IntakeDeps {
   config: Config;
   store: Store;
   board: IntakeBoard;
+  log(text: string): void;
+}
+
+/** リポジトリに無い「先に済ませる Issue」の書き漏れ */
+export function missingPrerequisiteProblem(issue: number): string {
+  return `「先に済ませる Issue」の #${issue} がリポジトリに見つかりません`;
 }
 
 /**
- * Ready の Issue を拾う。そろっていればテスト役の列へ、
- * 書き漏れがあれば Blocked に移し、欠けた項目をコメントする
- * （窓口があればメンションせずスレッドで、無ければメンションして確かめる）
+ * Ready の Issue を拾う。
+ * - 書き漏れがあれば（「先に済ませる Issue」の状態にかかわらず）Blocked に移し、欠けた項目をコメントする
+ *   （窓口があればメンションせずスレッドで、無ければメンションして確かめる）
+ * - 「先に済ませる Issue」にリポジトリに無い番号があれば、書き漏れと同じく Blocked に移す
+ * - 「先に済ませる Issue」にまだ開いている Issue があれば、動かさずコメントもせずに待つ
+ * - そろっていればテスト役の列へ移す
+ *
+ * statusOf の既定値は、この1件だけを確かめるとき用（呼び出しのたびに問い合わせ結果を捨てる）。
+ * Ready の複数の Issue を1回の確認で続けて確かめるときは、呼び出し元が
+ * cachedStatusOf(board, cache) の cache を共有して渡すこと（src/loop.ts の tick と src/start.ts）
  */
 export async function pickUp(
   deps: IntakeDeps,
   issue: { number: number; body: string },
+  statusOf: (
+    issue: number,
+  ) => Promise<WorkIssueStatus | undefined> = cachedStatusOf(deps.board),
 ): Promise<IntakeResult> {
   const { columns } = deps.config.github;
   const problems = checkIssueBody(issue.body);
   if (problems.length === 0) {
-    await deps.board.moveIssue(issue.number, columns.testing);
-    return { accepted: true };
+    const prereq = await prerequisiteState(issue.number, issue.body, statusOf);
+    problems.push(...prereq.missing.map(missingPrerequisiteProblem));
+    if (problems.length === 0) {
+      if (prereq.open.length > 0) {
+        deps.log(
+          `#${issue.number}: 先に済ませる Issue（${prereq.open.map((n) => `#${n}`).join("、")}）がまだ開いているため、${columns.ready} に残して待ちます`,
+        );
+        return { accepted: false, waiting: prereq.open };
+      }
+      await deps.board.moveIssue(issue.number, columns.testing);
+      return { accepted: true };
+    }
   }
   await blockIssue(deps, issue.number, {
     body: blockedComment(problems, columns.ready),
