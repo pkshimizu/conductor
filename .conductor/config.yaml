@@ -31,6 +31,7 @@ roles:
       - Bash(npm run lint *)
       - Bash(npm run format)
       - Bash(npm run format:check)
+      - Bash(npm install)
 chat:
   type: discord
   channels:
