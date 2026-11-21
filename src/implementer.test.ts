@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { RoleRun } from "./claude.js";
 import { parseConfig } from "./config.js";
-import type { ExecResult } from "./exec.js";
+import { abortError, type ExecResult, isAbortError } from "./exec.js";
+import { partialWorkOf } from "./partial-work.js";
 import {
   implementerAllow,
   implementerDeny,
@@ -502,12 +503,13 @@ describe("keepPartialWork", () => {
 
   it("変えてはいけないファイルを戻し、残りをコミットしてブランチに push する", async () => {
     const g = fakeGit(["e2e/a.spec.ts", "src/a.ts"], "h");
-    await keepPartialWork(
+    const r = await keepPartialWork(
       { config: makeConfig(), git: g.git },
       ISSUE,
       "b",
       "h",
     );
+    expect(r).toBe("pushed");
     expect(g.calls).toEqual([
       "discard e2e/a.spec.ts",
       "commit src/a.ts",
@@ -515,22 +517,85 @@ describe("keepPartialWork", () => {
     ]);
   });
 
-  it("変更が無ければ何もしない。保護対象が変わっていたら push しない", async () => {
+  it("変更が無ければ何もしない。保護対象が変わっていたら push せず、捨てたことを返す", async () => {
     const none = fakeGit([], "h");
-    await keepPartialWork(
+    const r1 = await keepPartialWork(
       { config: makeConfig(), git: none.git },
       ISSUE,
       "b",
       "h",
     );
+    expect(r1).toBe("nothing");
     expect(none.calls).toEqual([]);
     const broken = fakeGit(["src/a.ts"], "x");
-    await keepPartialWork(
+    const r2 = await keepPartialWork(
       { config: makeConfig(), git: broken.git },
       ISSUE,
       "b",
       "h",
     );
+    expect(r2).toBe("discarded");
     expect(broken.calls).toEqual(["commit src/a.ts", "reset b"]);
+  });
+});
+
+describe("runImplementer の中断", () => {
+  const aborted = () => {
+    const c = new AbortController();
+    c.abort(abortError());
+    return c.signal;
+  };
+
+  it("実装役が中断で終わったら、変更を push して、残したことを付けた AbortError を投げる", async () => {
+    const s = setup([]);
+    await s.init();
+    s.deps.signal = aborted();
+    s.deps.run = () => {
+      s.files.set("src/a.ts", "x");
+      return Promise.reject(abortError());
+    };
+    const e: unknown = await runImplementer(s.deps, ISSUE).catch(
+      (x: unknown) => x,
+    );
+    expect(isAbortError(e)).toBe(true);
+    expect(partialWorkOf(e)).toEqual({ kind: "pushed" });
+    expect(s.log).toContain("push conductor/issue-2");
+  });
+
+  it("push に失敗したら、残せなかったことと理由を付けた AbortError を投げる", async () => {
+    const s = setup([]);
+    await s.init();
+    s.deps.signal = aborted();
+    s.deps.git.push = () => Promise.reject(new Error("通信に失敗"));
+    s.deps.run = () => {
+      s.files.set("src/a.ts", "x");
+      return Promise.reject(abortError());
+    };
+    const e: unknown = await runImplementer(s.deps, ISSUE).catch(
+      (x: unknown) => x,
+    );
+    expect(isAbortError(e)).toBe(true);
+    expect(partialWorkOf(e)).toEqual({ kind: "failed", reason: "通信に失敗" });
+  });
+
+  it("実装役のあとの整形で中断されても、変更をブランチに残す", async () => {
+    const s = setup([{ output: approve, write: { "src/a.ts": "x" } }], {
+      format: () => 0,
+    });
+    await s.init();
+    const controller = new AbortController();
+    s.deps.signal = controller.signal;
+    const shell = s.deps.shell;
+    s.deps.shell = (cmd, o) => {
+      if (cmd !== "npm run format") return shell(cmd, o);
+      controller.abort(abortError());
+      return Promise.reject(abortError());
+    };
+    const e: unknown = await runImplementer(s.deps, ISSUE).catch(
+      (x: unknown) => x,
+    );
+    expect(partialWorkOf(e)).toEqual({ kind: "pushed" });
+    expect(s.log).toContain("commit src/a.ts wip: #2 の実装（中断）");
+    expect(s.log).toContain("push conductor/issue-2");
   });
 });

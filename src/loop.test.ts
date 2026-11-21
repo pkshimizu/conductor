@@ -2,7 +2,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
+import { PartialWorkAbortError } from "./partial-work.js";
 import {
+  abortComment,
   abortReason,
   MAX_FAILURES,
   runLoop,
@@ -493,6 +495,62 @@ describe("管理画面からの中断（StepAborter）", () => {
       "管理画面から中断しました（実装役の作業中）。",
     );
     expect(abortReason(undefined)).toBe("管理画面から中断しました。");
+  });
+
+  it("変更の残し方に合わせてコメントの文を変える", () => {
+    expect(abortComment("implementer", "Ready", { kind: "pushed" })).toContain(
+      "それまでの変更は Issue のブランチに残しています。",
+    );
+    expect(abortComment("implementer", "Ready", { kind: "nothing" })).toContain(
+      "ブランチに残す変更はありませんでした。",
+    );
+    expect(
+      abortComment("implementer", "Ready", { kind: "discarded" }),
+    ).not.toContain("残しています");
+    // 変更を残さない役では、残したとは書かない
+    const tester = abortComment("tester", "Ready");
+    expect(tester).not.toContain("残しています");
+    expect(tester).toContain("最初からやり直します");
+    for (const role of ["reviewer", "ci", "merge"] as const) {
+      expect(abortComment(role, "Ready")).not.toContain("残しています");
+    }
+    expect(abortComment("reviewer", "Ready")).toContain(
+      "続けるときは Ready 列に戻してください。",
+    );
+  });
+
+  it("変更をブランチに残せなかったら、理由をコメント・止まった理由・ログに出す", async () => {
+    const t = setup({ Implementing: [3] });
+    await t.setStage(3, "implementing");
+    const state = newLoopState();
+    t.results.implement = () => {
+      state.steps.abort(3);
+      return Promise.reject(
+        new PartialWorkAbortError({ kind: "failed", reason: "通信に失敗" }),
+      );
+    };
+    await tick(t.deps, state);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    const body = t.comments[0]?.body ?? "";
+    expect(body).toContain(
+      "変更をブランチに残せませんでした（理由: 通信に失敗）",
+    );
+    expect(body).not.toContain("残しています");
+    const record = await t.store.get({ repo: REPO, issue: 3 });
+    expect(record?.blockedReason).toContain("通信に失敗");
+    expect(t.logs.some((l) => l.includes("通信に失敗"))).toBe(true);
+  });
+
+  it("中断のほかに失敗していたら、その内容をログに出す", async () => {
+    const t = setup({ Testing: [3] });
+    const state = newLoopState();
+    t.results.test = () => {
+      state.steps.abort(3);
+      return Promise.reject(new Error("git が壊れた"));
+    };
+    await tick(t.deps, state);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    expect(t.logs.some((l) => l.includes("git が壊れた"))).toBe(true);
   });
 });
 

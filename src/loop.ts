@@ -9,7 +9,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { blockIssue, followBlockedThreads } from "./blocked-thread.js";
 import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
-import { abortError } from "./exec.js";
+import { abortError, isAbortError } from "./exec.js";
+import { type PartialWork, partialWorkOf } from "./partial-work.js";
 import { pendingFindings } from "./rejection.js";
 import { receiveRequirements } from "./requirements.js";
 import type { RespecDeps } from "./respec.js";
@@ -283,15 +284,42 @@ export function abortReason(role: ActiveRole | undefined): string {
     : `管理画面から中断しました（${ROLE_LABELS[role]}の作業中）。`;
 }
 
+/**
+ * 管理画面から中断したときの、それまでの変更についての一文。
+ * work は変更を残す役（実装役）が残し方を伝えたときだけ渡る
+ */
+export function abortWorkNote(
+  role: ActiveRole | undefined,
+  work: PartialWork | undefined,
+): string | undefined {
+  switch (work?.kind) {
+    case "pushed":
+      return "それまでの変更は Issue のブランチに残しています。";
+    case "nothing":
+      return "ブランチに残す変更はありませんでした。";
+    case "discarded":
+      return "受け入れテスト・seed・.conductor/ が変わっていたため、それまでの変更はブランチに残していません。";
+    case "failed":
+      return `それまでの変更をブランチに残せませんでした（理由: ${work.reason}）。`;
+    case undefined:
+      // テスト役は書きかけのテストを残さない（続けるときは最初から書き直す）
+      return role === "tester"
+        ? "テスト役の書きかけの変更は残していません。続けるときはテスト役が最初からやり直します。"
+        : undefined;
+  }
+}
+
 /** 管理画面から中断したときの Issue のコメント */
 export function abortComment(
   role: ActiveRole | undefined,
   ready: string,
+  work?: PartialWork,
 ): string {
+  const note = abortWorkNote(role, work);
   return [
     abortReason(role),
     "",
-    `それまでの変更は Issue のブランチに残しています。続けるときは ${ready} 列に戻してください。`,
+    `${note === undefined ? "" : note}続けるときは ${ready} 列に戻してください。`,
   ].join("\n");
 }
 
@@ -407,13 +435,26 @@ async function blockAborted(
   state: LoopState,
   issue: number,
   role: ActiveRole | undefined,
+  error: { e: unknown } | undefined,
 ): Promise<void> {
   state.failures.delete(issue);
   deps.log(`#${issue}: ${abortReason(role)}`);
+  const work = partialWorkOf(error?.e);
+  if (error !== undefined && !isAbortError(error.e)) {
+    // 中断のほかに失敗していたら、その内容も残す
+    deps.log(`#${issue}: 中断の間に失敗: ${errorMessage(error.e)}`);
+  }
+  if (work?.kind === "failed") {
+    deps.log(`#${issue}: 変更をブランチに残せませんでした: ${work.reason}`);
+  }
   try {
     await blockIssue(deps, issue, {
-      body: abortComment(role, deps.config.github.columns.ready),
-      reason: abortReason(role),
+      body: abortComment(role, deps.config.github.columns.ready, work),
+      // 変更を残せなかったときは、止まった理由にも書く（人が Ready に戻す前に気づけるように）
+      reason:
+        work?.kind === "failed"
+          ? `${abortReason(role)}${abortWorkNote(role, work) ?? ""}`
+          : abortReason(role),
     });
   } catch (e) {
     deps.log(`#${issue}: Blocked への移動に失敗: ${errorMessage(e)}`);
@@ -443,7 +484,7 @@ async function attempt(
   const role = state.steps.roleOf(controller);
   state.steps.end(controller);
   if (controller.signal.aborted) {
-    await blockAborted(deps, state, n, role);
+    await blockAborted(deps, state, n, role, error);
     return;
   }
   if (error === undefined) {
