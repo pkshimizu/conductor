@@ -15,8 +15,8 @@
  *   新しい投稿を受け取る
  *   - 許可した人（`config.chat.allowed_users`）の投稿1つを要件1件とする
  *   - 要件は `store.updateRequirement(投稿 ID, { threadId })` で記録する（状態は仕様化中のまま）
- *   - 質問チャンネル（`config.chat.channels.questions`）に要件のスレッドを作り、
- *     スレッドに要件の本文を引用（各行の先頭に "> "）して書く
+ *   - 要件チャンネルのその投稿から要件のスレッドを作る（#86 で変更。以前は質問チャンネルに
+ *     スレッドを作って本文を引用していたが、質問チャンネルには何も書かず、引用もしない）
  *   - 許可していない人・Bot 自身の投稿は無視する
  *   - 受け取った投稿は、再起動しても二重に受け取らない（記録は Store に残す）
  *
@@ -117,10 +117,10 @@ function setup(
   return { deps, calls };
 }
 
-/** 質問チャンネルに作られたスレッド（ID つき） */
-function questionThreads(chat: MemoryChat) {
+/** 要件チャンネルに作られたスレッド（ID つき）。#86 で要件のスレッドは要件チャンネルの投稿から作る */
+function requirementThreads(chat: MemoryChat) {
   return [...chat.threads]
-    .filter(([, t]) => t.channelId === QUESTIONS)
+    .filter(([, t]) => t.channelId === REQUIREMENTS)
     .map(([id, t]) => ({ id, ...t }));
 }
 
@@ -142,7 +142,7 @@ afterEach(() => {
 });
 
 describe("Issue #41: 要件の受け取り", () => {
-  it("AC1: 許可した人が要件チャンネルに投稿すると、次の確認で要件1件として記録し、質問チャンネルにスレッドを作って本文を引用して書く", async () => {
+  it("AC1: 許可した人が要件チャンネルに投稿すると、次の確認で要件1件として記録し、その投稿からスレッドを作る（#86 により質問チャンネルには書かず、引用もしない）", async () => {
     const chat = new MemoryChat(BOT);
     const store = new MemoryStore(clock);
     // Given: 許可した人が要件チャンネルに投稿した
@@ -155,10 +155,12 @@ describe("Issue #41: 要件の受け取り", () => {
     // When: 次の確認
     await tick(deps, newLoopState());
 
-    // Then: 質問チャンネルにスレッドが1つできる
-    const threads = questionThreads(chat);
+    // Then: 要件チャンネルのその投稿からスレッドが1つできる（#86）
+    expect(chat.threads.size).toBe(1);
+    const threads = requirementThreads(chat);
     expect(threads).toHaveLength(1);
     const thread = threads[0]!;
+    expect(thread.messageId).toBe(posted.id);
 
     // Then: 要件1件として、投稿 ID とスレッドで記録する（仕様化中）
     expect(await store.listRequirements()).toEqual([
@@ -169,10 +171,11 @@ describe("Issue #41: 要件の受け取り", () => {
       }),
     ]);
 
-    // Then: スレッドに要件の本文を引用して書く
+    // Then: 質問チャンネルには何も書かず、スレッドに要件の本文の引用も書かない（#86）
+    expect(chat.messages.get(QUESTIONS) ?? []).toEqual([]);
     const written = botTexts(chat, thread.id).join("\n");
-    expect(written).toContain("> 単語帳に検索をつけたい");
-    expect(written).toContain("> 前方一致で探せるように");
+    expect(written).not.toContain("> 単語帳に検索をつけたい");
+    expect(written).not.toContain("> 前方一致で探せるように");
   });
 
   it("AC2: 許可していない人の投稿や Bot 自身の投稿は、次の確認で無視する", async () => {
@@ -205,7 +208,10 @@ describe("Issue #41: 要件の受け取り", () => {
     await tick(deps, newLoopState());
     const requirements = await store.listRequirements();
     expect(requirements.map((r) => r.messageId)).toEqual([allowed.id]);
-    expect(questionThreads(chat)).toHaveLength(1);
+    expect(chat.threads.size).toBe(1);
+    expect(requirementThreads(chat).map((t) => t.messageId)).toEqual([
+      allowed.id,
+    ]);
   });
 
   it("AC3: 要件チャンネルに2回投稿すると、次の確認で2件の要件として扱う", async () => {
@@ -228,7 +234,8 @@ describe("Issue #41: 要件の受け取り", () => {
     // Then: 2件の要件として、それぞれのスレッドで記録する
     const requirements = await store.listRequirements();
     expect(requirements.map((r) => r.messageId)).toEqual([first.id, second.id]);
-    const threads = questionThreads(chat);
+    expect(chat.threads.size).toBe(2);
+    const threads = requirementThreads(chat);
     expect(threads).toHaveLength(2);
     const threadOf = (messageId: string) =>
       requirements.find((r) => r.messageId === messageId)?.threadId;
@@ -239,13 +246,15 @@ describe("Issue #41: 要件の受け取り", () => {
       [threadOf(first.id)!, threadOf(second.id)!].sort(),
     );
 
-    // それぞれのスレッドには、その要件の本文だけを引用する
+    // それぞれのスレッドは、その要件の投稿から作る（#86。引用は書かない）
+    const byId = new Map(threads.map((t) => [t.id, t]));
+    expect(byId.get(threadOf(first.id)!)?.messageId).toBe(first.id);
+    expect(byId.get(threadOf(second.id)!)?.messageId).toBe(second.id);
+    expect(chat.messages.get(QUESTIONS) ?? []).toEqual([]);
     const firstText = botTexts(chat, threadOf(first.id)!).join("\n");
     const secondText = botTexts(chat, threadOf(second.id)!).join("\n");
-    expect(firstText).toContain("> 単語帳に検索をつけたい");
-    expect(firstText).not.toContain("CSV");
-    expect(secondText).toContain("> あと CSV で書き出したい");
-    expect(secondText).not.toContain("検索をつけたい");
+    expect(firstText).not.toContain("> 単語帳に検索をつけたい");
+    expect(secondText).not.toContain("> あと CSV で書き出したい");
   });
 
   it("AC4: 受け取り済みの投稿は、conductor を再起動して確認しても二重に受け取らない", async () => {
@@ -263,7 +272,7 @@ describe("Issue #41: 要件の受け取り", () => {
         await tick(setup(chat, before).deps, newLoopState());
         const list = await before.listRequirements();
         expect(list.map((r) => r.messageId)).toEqual([posted.id]);
-        expect(questionThreads(chat)).toHaveLength(1);
+        expect(requirementThreads(chat)).toHaveLength(1);
         return list;
       } finally {
         await before.close();
@@ -281,7 +290,8 @@ describe("Issue #41: 要件の受け取り", () => {
 
       // Then: 二重に受け取らない（記録・スレッド・書き込みは増えない）
       expect(await after.listRequirements()).toEqual(received);
-      expect(questionThreads(chat)).toHaveLength(1);
+      expect(chat.threads.size).toBe(1);
+      expect(requirementThreads(chat)).toHaveLength(1);
       expect((chat.messages.get(QUESTIONS) ?? []).length).toBe(
         questionMessages,
       );
@@ -300,7 +310,8 @@ describe("Issue #41: 要件の受け取り", () => {
         posted.id,
         next.id,
       ]);
-      expect(questionThreads(chat)).toHaveLength(2);
+      expect(chat.threads.size).toBe(2);
+      expect(requirementThreads(chat)).toHaveLength(2);
     } finally {
       await after.close();
     }
@@ -334,8 +345,9 @@ describe("Issue #41: 要件の受け取り", () => {
     // Then: 要件も受け取る
     const requirements = await store.listRequirements();
     expect(requirements.map((r) => r.messageId)).toEqual([posted.id]);
-    expect(questionThreads(chat)).toHaveLength(1);
-    expect(requirements[0]!.threadId).toBe(questionThreads(chat)[0]!.id);
+    expect(chat.threads.size).toBe(1);
+    expect(requirementThreads(chat)).toHaveLength(1);
+    expect(requirements[0]!.threadId).toBe(requirementThreads(chat)[0]!.id);
 
     // 次の確認でも Issue は進み続ける
     await tick(deps, newLoopState());
