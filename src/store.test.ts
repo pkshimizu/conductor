@@ -323,6 +323,50 @@ describe.each([
     await store.setBlockedThread(KEY, { reason: "壊れた", threadId: "t1" });
     expect((await store.getBlockedThread(KEY))?.respec).toBeUndefined();
   });
+
+  it("許可の確認の記録を置き換え・一覧・削除できる", async () => {
+    expect(await store.getPermissionRequest(KEY)).toBeUndefined();
+    await store.setPermissionRequest(KEY, {
+      role: "implementer",
+      rules: ["Bash(npm i x)"],
+      denied: ["npm i x"],
+      title: "題名",
+    });
+    await store.setPermissionRequest(
+      { ...KEY, issue: 1 },
+      { role: "tester", rules: ["WebFetch"], denied: ["WebFetch {}"] },
+    );
+    const full = await store.setPermissionRequest(KEY, {
+      role: "implementer",
+      rules: ["Bash(npm i x)"],
+      denied: ["npm i x"],
+      title: "題名",
+      headId: "h1",
+      threadId: "t1",
+      granted: ["Bash(npm i *)"],
+      pr: 120,
+    });
+    expect(full).toEqual({
+      ...KEY,
+      role: "implementer",
+      rules: ["Bash(npm i x)"],
+      denied: ["npm i x"],
+      title: "題名",
+      headId: "h1",
+      threadId: "t1",
+      granted: ["Bash(npm i *)"],
+      pr: 120,
+      updatedAt: "2026-11-15T00:00:00.000Z",
+    });
+    expect(await store.getPermissionRequest(KEY)).toEqual(full);
+    expect(
+      (await store.listPermissionRequests(KEY.repo)).map((r) => r.issue),
+    ).toEqual([1, 2]);
+    expect(await store.listPermissionRequests("other/repo")).toEqual([]);
+    await store.deletePermissionRequest(KEY);
+    expect(await store.getPermissionRequest(KEY)).toBeUndefined();
+    expect(await store.listPermissionRequests(KEY.repo)).toHaveLength(1);
+  });
 });
 
 describe("SqliteStore の再起動", () => {

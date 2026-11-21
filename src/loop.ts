@@ -102,6 +102,11 @@ export interface LoopDeps {
   progress?: (requirement: RequirementRecord) => Promise<StepResult>;
   /** 仕様の作り直し。要件の作業用 Issue が止まり、スレッドに方針が書かれたら仕様化役に判断させる。窓口があるときに start.ts がつなぐ。無ければ方針をそのまま書き写す */
   respec?: RespecDeps;
+  /**
+   * 許可の確認（役が許可リストにない操作を拒否された Issue）を1回分確かめる（permission-request.ts の followPermissionRequests）。
+   * start.ts がつなぐ。無ければ確かめない
+   */
+  permissions?: () => Promise<void>;
   /** 待つ。signal が来たらすぐ戻る（テストで差し替える） */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** 稼働状態が変わったときに呼ぶ（確認している間は "running"、次の確認を待つ間は "idle"）。管理画面に知らせるために start.ts がつなぐ */
@@ -409,6 +414,18 @@ async function blockedThreads(deps: LoopDeps): Promise<void> {
   } catch (e) {
     deps.log(
       `止まったときのスレッドの確認に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
+    );
+  }
+}
+
+/** 許可の確認を1回分確かめる。失敗しても Issue の処理は止めない（次の確認でやり直す） */
+async function permissionRequests(deps: LoopDeps): Promise<void> {
+  if (deps.permissions === undefined) return;
+  try {
+    await deps.permissions();
+  } catch (e) {
+    deps.log(
+      `許可の確認に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
     );
   }
 }
@@ -737,6 +754,8 @@ export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   await approveSpecs(deps);
   await decomposeRequirements(deps);
   await progressRequirements(deps);
+  // 許可しなかった（Blocked にした）Issue のスレッドを同じ確認で作るよう、止まったときのスレッドより先に確かめる
+  await permissionRequests(deps);
   // Ready に戻した Issue を同じ確認で拾うよう、列を読む前に確かめる
   await blockedThreads(deps);
   const { columns, repo } = config.github;

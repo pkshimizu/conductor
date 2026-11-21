@@ -32,6 +32,7 @@ import { Git } from "./git.js";
 import { type GitHub, githubFromConfig } from "./github.js";
 import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
+import { followPermissionRequests } from "./permission-request.js";
 import { cachedStatusOf, checkProgress } from "./progress.js";
 import type { RespecDeps } from "./respec.js";
 import type { LoopActivity, LoopDeps, StepContext } from "./loop.js";
@@ -212,6 +213,20 @@ export async function buildLoopDeps(
     ...(decompose === undefined ? {} : { decompose }),
     ...(progress === undefined ? {} : { progress }),
     log,
+    // 許可リストにない操作を拒否された Issue の許可の確認。規則は設定の保存と同じく PR を作ってマージする
+    permissions: () =>
+      followPermissionRequests({
+        config,
+        store,
+        board: github,
+        ...(chat === undefined ? {} : { chat }),
+        saveSettings: async (form) =>
+          saveSettings(
+            { repoDir, github, base: await github.baseBranch() },
+            form,
+          ),
+        log,
+      }),
     pickUp: (issue, cache) =>
       pickUp(
         { config, store, board: github, log },

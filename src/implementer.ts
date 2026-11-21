@@ -13,6 +13,10 @@ import type { Git } from "./git.js";
 import { matchesAny } from "./git.js";
 import { listAcceptance } from "./intake.js";
 import { PartialWorkAbortError } from "./partial-work.js";
+import {
+  permissionDenials,
+  recordPermissionRequest,
+} from "./permission-request.js";
 import { recordRejection, type Board } from "./rejection.js";
 import type { IssueKey, Store } from "./store.js";
 import {
@@ -87,6 +91,8 @@ export type ImplementerResult =
       blocked: boolean;
     }
   | { status: "objection"; objections: number }
+  /** 許可リストにない操作を拒否されたので、許可を待つ（rules は足す規則の案） */
+  | { status: "waiting_permission"; rules: string[] }
   | { status: "waiting" };
 
 /** 実装役が変えてはいけないファイル */
@@ -319,6 +325,11 @@ export async function runImplementer(
     return { status: "waiting" };
   if (record.objections > config.limits.objections)
     return { status: "waiting" };
+  // 許可の確認を待つ間は役を起動しない
+  const permission = await store.getPermissionRequest(key);
+  if (permission !== undefined) {
+    return { status: "waiting_permission", rules: permission.rules };
+  }
 
   const branch = record.branch ?? testBranch(issue.number);
   const reject = (problems: string[]) =>
@@ -428,6 +439,12 @@ async function implementAndPush(
     ...(deps.signal ? { signal: deps.signal } : {}),
   });
   const out = result.output;
+  // 許可リストにない操作を拒否されたら（deny に当てはまるものは除く）、差し戻しにせず許可を確かめる
+  const asked = permissionDenials(
+    result.denials,
+    implementerDeny(config),
+    deps.repoDir,
+  );
 
   if (out.verdict === "objection") {
     await git.discardAll();
@@ -498,6 +515,15 @@ async function implementAndPush(
     return reject(problems);
   }
   if (rest.length > 0) await git.push(branch);
+  if (asked.rules.length > 0) {
+    // 途中の実装は push してあるので、許可を足したら続きから直す（差し戻しは数えない）
+    await recordPermissionRequest(store, key, {
+      role: "implementer",
+      title: issue.title,
+      ...asked,
+    });
+    return { result: { status: "waiting_permission", rules: asked.rules } };
+  }
   if (problems.length > 0) return reject(problems);
   if (out.verdict !== "approve") {
     return reject([`実装役が ${out.verdict} を返しました: ${out.summary}`]);

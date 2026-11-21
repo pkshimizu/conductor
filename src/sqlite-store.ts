@@ -22,6 +22,9 @@ import {
   type RequirementState,
   type RequirementUpdate,
   type RespecProgress,
+  type PermissionRequestInput,
+  type PermissionRequestRecord,
+  permissionRequestRecord,
   type Store,
   type Summary,
   systemClock,
@@ -78,7 +81,64 @@ CREATE TABLE IF NOT EXISTS blocked_threads (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (repo, issue)
 );
+CREATE TABLE IF NOT EXISTS permission_requests (
+  repo TEXT NOT NULL,
+  issue INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  rules TEXT NOT NULL,
+  denied TEXT NOT NULL,
+  title TEXT,
+  head_id TEXT,
+  thread_id TEXT,
+  granted TEXT,
+  pr INTEGER,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (repo, issue)
+);
 `;
+
+interface PermissionRequestRow {
+  repo: string;
+  issue: number;
+  role: string;
+  rules: string;
+  denied: string;
+  title: string | null;
+  head_id: string | null;
+  thread_id: string | null;
+  granted: string | null;
+  pr: number | null;
+  updated_at: string;
+}
+
+const stringListSchema = z.array(z.string());
+
+function parseStringList(text: string): string[] {
+  const parsed = stringListSchema.safeParse(JSON.parse(text));
+  if (!parsed.success) {
+    throw new Error(`許可の確認の記録が壊れています: ${text}`);
+  }
+  return parsed.data;
+}
+
+function permissionRequestFromRow(
+  row: PermissionRequestRow,
+): PermissionRequestRecord {
+  const r: PermissionRequestRecord = {
+    repo: row.repo,
+    issue: row.issue,
+    role: row.role,
+    rules: parseStringList(row.rules),
+    denied: parseStringList(row.denied),
+    updatedAt: row.updated_at,
+  };
+  if (row.title !== null) r.title = row.title;
+  if (row.head_id !== null) r.headId = row.head_id;
+  if (row.thread_id !== null) r.threadId = row.thread_id;
+  if (row.granted !== null) r.granted = parseStringList(row.granted);
+  if (row.pr !== null) r.pr = row.pr;
+  return r;
+}
 
 interface BlockedThreadRow {
   repo: string;
@@ -487,6 +547,67 @@ export class SqliteStore implements Store {
       .prepare("SELECT * FROM blocked_threads WHERE repo = ? ORDER BY issue")
       .all(repo) as unknown as BlockedThreadRow[];
     return Promise.resolve(rows.map(blockedThreadFromRow));
+  }
+
+  getPermissionRequest(
+    key: IssueKey,
+  ): Promise<PermissionRequestRecord | undefined> {
+    const row = this.db
+      .prepare("SELECT * FROM permission_requests WHERE repo = ? AND issue = ?")
+      .get(key.repo, key.issue) as PermissionRequestRow | undefined;
+    return Promise.resolve(row && permissionRequestFromRow(row));
+  }
+
+  setPermissionRequest(
+    key: IssueKey,
+    input: PermissionRequestInput,
+  ): Promise<PermissionRequestRecord> {
+    const r = permissionRequestRecord(key, input, this.clock());
+    this.db
+      .prepare(
+        `INSERT INTO permission_requests (repo, issue, role, rules, denied, title, head_id, thread_id, granted, pr, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repo, issue) DO UPDATE SET
+           role = excluded.role,
+           rules = excluded.rules,
+           denied = excluded.denied,
+           title = excluded.title,
+           head_id = excluded.head_id,
+           thread_id = excluded.thread_id,
+           granted = excluded.granted,
+           pr = excluded.pr,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        r.repo,
+        r.issue,
+        r.role,
+        JSON.stringify(r.rules),
+        JSON.stringify(r.denied),
+        r.title ?? null,
+        r.headId ?? null,
+        r.threadId ?? null,
+        r.granted === undefined ? null : JSON.stringify(r.granted),
+        r.pr ?? null,
+        r.updatedAt,
+      );
+    return Promise.resolve(structuredClone(r));
+  }
+
+  deletePermissionRequest(key: IssueKey): Promise<void> {
+    this.db
+      .prepare("DELETE FROM permission_requests WHERE repo = ? AND issue = ?")
+      .run(key.repo, key.issue);
+    return Promise.resolve();
+  }
+
+  listPermissionRequests(repo: string): Promise<PermissionRequestRecord[]> {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM permission_requests WHERE repo = ? ORDER BY issue",
+      )
+      .all(repo) as unknown as PermissionRequestRow[];
+    return Promise.resolve(rows.map(permissionRequestFromRow));
   }
 
   close(): Promise<void> {

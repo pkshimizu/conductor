@@ -205,6 +205,59 @@ export interface BlockedThreadInput {
   respec?: RespecProgress;
 }
 
+/**
+ * 役が許可リストにない操作を拒否されたときの、許可の確認の記録（permission-request.ts）。
+ * 拒否を見つけたときに作り、許可が済んだ（規則を足した／❌ で Blocked にした）ら消す。
+ * 記録がある間は、その Issue の役を起動しない
+ */
+export interface PermissionRequestRecord extends IssueKey {
+  /** 拒否された役（config の roles のキー。例: "implementer"） */
+  role: string;
+  /** 拒否された操作を許可の規則の形にしたもの（例: "Bash(npm install --save-dev react-markdown)"） */
+  rules: string[];
+  /** 拒否された操作の説明（コマンドなど。スレッドやコメントに出す） */
+  denied: string[];
+  /** Issue の題名（スレッドの名前に使う） */
+  title?: string;
+  /** 質問チャンネルに書いた、案の書き込み（スレッドのもとの投稿。✅・❌ はこれに付ける） */
+  headId?: string;
+  /** 質問チャンネルに作ったスレッド */
+  threadId?: string;
+  /** 足すと決まった規則（✅ なら rules、人が書いたらその規則） */
+  granted?: string[];
+  /** 規則を足す設定の PR（作ったがマージの途中で失敗しても、作り直さないため） */
+  pr?: number;
+  /** 最後に更新した時刻（ISO 8601） */
+  updatedAt: string;
+}
+
+/** 書き込む項目 */
+export type PermissionRequestInput = Omit<
+  PermissionRequestRecord,
+  keyof IssueKey | "updatedAt"
+>;
+
+export function permissionRequestRecord(
+  key: IssueKey,
+  input: PermissionRequestInput,
+  now: Date,
+): PermissionRequestRecord {
+  const r: PermissionRequestRecord = {
+    repo: key.repo,
+    issue: key.issue,
+    role: input.role,
+    rules: [...input.rules],
+    denied: [...input.denied],
+    updatedAt: now.toISOString(),
+  };
+  if (input.title !== undefined) r.title = input.title;
+  if (input.headId !== undefined) r.headId = input.headId;
+  if (input.threadId !== undefined) r.threadId = input.threadId;
+  if (input.granted !== undefined) r.granted = [...input.granted];
+  if (input.pr !== undefined) r.pr = input.pr;
+  return r;
+}
+
 export interface Store {
   get(key: IssueKey): Promise<IssueRecord | undefined>;
   /** 記録が無ければ回数0で作り、指定した項目だけ書き換える。undefined を渡した項目は消す */
@@ -232,6 +285,17 @@ export interface Store {
   deleteBlockedThread(key: IssueKey): Promise<void>;
   /** リポジトリの記録を Issue の番号の順に返す */
   listBlockedThreads(repo: string): Promise<BlockedThreadRecord[]>;
+  getPermissionRequest(
+    key: IssueKey,
+  ): Promise<PermissionRequestRecord | undefined>;
+  /** Issue の許可の確認の記録を置き換える（無ければ作る） */
+  setPermissionRequest(
+    key: IssueKey,
+    input: PermissionRequestInput,
+  ): Promise<PermissionRequestRecord>;
+  deletePermissionRequest(key: IssueKey): Promise<void>;
+  /** リポジトリの許可の確認の記録を Issue の番号の順に返す */
+  listPermissionRequests(repo: string): Promise<PermissionRequestRecord[]>;
   close(): Promise<void>;
 }
 
@@ -364,6 +428,7 @@ export class MemoryStore implements Store {
   private readonly requirements = new Map<string, RequirementRecord>();
   private readonly readPositions = new Map<string, string>();
   private readonly blocked = new Map<string, BlockedThreadRecord>();
+  private readonly permissions = new Map<string, PermissionRequestRecord>();
 
   constructor(private readonly clock: Clock = systemClock) {}
 
@@ -463,6 +528,36 @@ export class MemoryStore implements Store {
   listBlockedThreads(repo: string): Promise<BlockedThreadRecord[]> {
     return Promise.resolve(
       [...this.blocked.values()]
+        .filter((r) => r.repo === repo)
+        .sort((a, b) => a.issue - b.issue)
+        .map((r) => structuredClone(r)),
+    );
+  }
+
+  getPermissionRequest(
+    key: IssueKey,
+  ): Promise<PermissionRequestRecord | undefined> {
+    const r = this.permissions.get(this.id(key));
+    return Promise.resolve(r && structuredClone(r));
+  }
+
+  setPermissionRequest(
+    key: IssueKey,
+    input: PermissionRequestInput,
+  ): Promise<PermissionRequestRecord> {
+    const r = permissionRequestRecord(key, input, this.clock());
+    this.permissions.set(this.id(key), r);
+    return Promise.resolve(structuredClone(r));
+  }
+
+  deletePermissionRequest(key: IssueKey): Promise<void> {
+    this.permissions.delete(this.id(key));
+    return Promise.resolve();
+  }
+
+  listPermissionRequests(repo: string): Promise<PermissionRequestRecord[]> {
+    return Promise.resolve(
+      [...this.permissions.values()]
         .filter((r) => r.repo === repo)
         .sort((a, b) => a.issue - b.issue)
         .map((r) => structuredClone(r)),
