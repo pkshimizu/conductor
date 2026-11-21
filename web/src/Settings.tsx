@@ -32,6 +32,7 @@ import {
   validateSettings,
 } from "../../src/settings-rules.js";
 import { fill, type Lang, type Messages, MESSAGES } from "./i18n.js";
+import { MarkdownView } from "./MarkdownView.js";
 import {
   addDraft,
   cancelSettings,
@@ -924,8 +925,19 @@ function PromptsTab(props: { ctx: Ctx; data: SettingsData }): ReactElement {
   const role: Role = state.prompt?.role ?? ROLES[0];
   const files = data.prompts[role];
   const file = files.find((p) => p.name === state.prompt?.file) ?? files[0];
+  const source = state.prompt?.source === true;
   const pick = (next: { role: Role; file?: string }) =>
     ctx.update({ ...state, prompt: next });
+  const setView = (toSource: boolean) => {
+    const next: { role: Role; file?: string; source?: true } = { role };
+    if (file !== undefined) next.file = file.name;
+    if (toSource) next.source = true;
+    ctx.update({ ...state, prompt: next });
+  };
+  const views = [
+    { label: t.viewRendered, selected: !source, onClick: () => setView(false) },
+    { label: t.viewSource, selected: source, onClick: () => setView(true) },
+  ];
   return (
     <Section
       title={t.secPrompts}
@@ -984,7 +996,29 @@ function PromptsTab(props: { ctx: Ctx; data: SettingsData }): ReactElement {
                   </button>
                 ))}
               </div>
-              {file !== undefined && <pre style={PRE}>{file.text}</pre>}
+              <div
+                role="group"
+                aria-label={t.viewMode}
+                style={{ display: "flex", gap: 4 }}
+              >
+                {views.map((v) => (
+                  <button
+                    key={v.label}
+                    type="button"
+                    aria-pressed={v.selected}
+                    onClick={v.onClick}
+                    style={tabStyle(v.selected)}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+              {file !== undefined &&
+                (source ? (
+                  <pre style={PRE}>{file.text}</pre>
+                ) : (
+                  <MarkdownView text={file.text} t={t} />
+                ))}
             </>
           )}
         </div>

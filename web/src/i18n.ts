@@ -161,6 +161,12 @@ export interface Messages {
   saveFailed: string;
   /** 指示ファイルが無い役 */
   noPrompts: string;
+  /** 指示ファイルの表示のしかた：整形 */
+  viewRendered: string;
+  /** 指示ファイルの表示のしかた：原文 */
+  viewSource: string;
+  /** 指示ファイルの表示のしかたのボタンの並び */
+  viewMode: string;
   /** 役の結果 */
   results: Readonly<Record<ResultKey, string>>;
   /** 進み具合の段階 */
@@ -340,6 +346,9 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
       "PR をマージしてから再起動してください。マージ前に再起動しても反映されません。",
     saveFailed: "保存できませんでした。conductor のログを確認してください。",
     noPrompts: "指示ファイルはありません",
+    viewRendered: "整形",
+    viewSource: "原文",
+    viewMode: "表示のしかた",
     results: {
       approved: "承認",
       changes: "差し戻し",
@@ -521,6 +530,9 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
       "Merge the pull request, then restart. Restarting before the merge will not apply the changes.",
     saveFailed: "Could not save. Check the conductor log.",
     noPrompts: "No instruction files",
+    viewRendered: "Formatted",
+    viewSource: "Source",
+    viewMode: "View",
     results: {
       approved: "Approved",
       changes: "Changes requested",
