@@ -4,8 +4,11 @@ import type { RoleResult, RoleRun } from "./claude.js";
 import { parseConfig } from "./config.js";
 import { newLoopState, tick, type LoopDeps } from "./loop.js";
 import {
+  APPROVAL_MARK,
+  isSummaryMessage,
   questionsMessage,
   runSpecifier,
+  summaryMessage,
   specBranch,
   specifierAllow,
   specifierPrompt,
@@ -130,6 +133,27 @@ describe("questionsMessage", () => {
     ).toContain(
       "1. A ですか\n   おすすめ: はい\n2. B ですか\n   おすすめ: いいえ",
     );
+  });
+});
+
+describe("summaryMessage", () => {
+  it("要約・PR の行・承認の案内を空行で区切り、要約の書き込みと見分けられる", () => {
+    const pr = { url: "https://github.com/o/r/pull/1" };
+    for (const fixed of [false, true]) {
+      const text = summaryMessage(" 要約 ", pr, fixed);
+      expect(text).toBe(
+        [
+          fixed ? "仕様を直しました。" : "仕様を書きました。",
+          "",
+          "要約",
+          "",
+          "PR: https://github.com/o/r/pull/1",
+          "",
+          `この内容でよければ、この書き込みに ${APPROVAL_MARK} を付けてください。仕様の PR をマージし、作業の分解に進みます。直してほしい点があれば、このスレッドに書いてください。`,
+        ].join("\n"),
+      );
+      expect(isSummaryMessage(text)).toBe(true);
+    }
   });
 });
 
