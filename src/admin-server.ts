@@ -11,6 +11,7 @@ import {
 } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DashboardData } from "./dashboard-data.js";
 
 /** 稼働状態（動作中・待機中・停止中） */
 export type AdminStatus = "running" | "idle" | "stopped";
@@ -33,6 +34,8 @@ export interface AdminServer {
   port: number;
   /** 稼働状態を変える。変わったら開いている画面に SSE で push する */
   setStatus(status: AdminStatus): void;
+  /** ダッシュボードの内容を変える。開いている画面に SSE で push する */
+  setDashboard(data: DashboardData): void;
   close(): Promise<void>;
 }
 
@@ -104,12 +107,14 @@ export interface AdminInfo {
   status: AdminStatus;
   repo: string;
   project: number;
+  /** ダッシュボードの内容（最後に setDashboard したもの）。まだ無ければ省く */
+  dashboard?: DashboardData;
 }
 
 /** SSE で送る1件（data: に JSON を1行） */
 export function statusEvent(info: AdminInfo): string {
-  const { status, repo, project } = info;
-  return `data: ${JSON.stringify({ status, repo, project })}\n\n`;
+  const { status, repo, project, dashboard } = info;
+  return `data: ${JSON.stringify({ status, repo, project, dashboard })}\n\n`;
 }
 
 async function isFile(file: string): Promise<boolean> {
@@ -149,8 +154,17 @@ export async function startAdminServer(
   const assetsDir = options.assetsDir ?? DEFAULT_ASSETS_DIR;
   const { repo, project } = options;
   let status = options.status;
+  let dashboard: DashboardData | undefined;
   let port = 0;
   const clients = new Set<ServerResponse>();
+  const info = (): AdminInfo =>
+    dashboard === undefined
+      ? { status, repo, project }
+      : { status, repo, project, dashboard };
+  const push = () => {
+    const event = statusEvent(info());
+    for (const res of clients) res.write(event);
+  };
 
   const openEvents = (req: IncomingMessage, res: ServerResponse) => {
     res.writeHead(200, {
@@ -159,7 +173,7 @@ export async function startAdminServer(
       connection: "keep-alive",
     });
     // 開いた直後に今の状態を1件送る（画面はこれで最初の表示を決める）
-    res.write(statusEvent({ status, repo, project }));
+    res.write(statusEvent(info()));
     clients.add(res);
     req.on("close", () => clients.delete(res));
   };
@@ -226,8 +240,11 @@ export async function startAdminServer(
     setStatus(next: AdminStatus) {
       if (next === status) return;
       status = next;
-      const event = statusEvent({ status, repo, project });
-      for (const res of clients) res.write(event);
+      push();
+    },
+    setDashboard(data: DashboardData) {
+      dashboard = data;
+      push();
     },
     close() {
       closing ??= new Promise<void>((done) => {

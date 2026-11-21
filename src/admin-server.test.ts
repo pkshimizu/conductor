@@ -13,6 +13,7 @@ import {
   startAdminServer,
   statusEvent,
 } from "./admin-server.js";
+import type { DashboardData } from "./dashboard-data.js";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
@@ -153,6 +154,33 @@ describe("startAdminServer", () => {
     server.setStatus("running");
     const second = await reader.read();
     expect(second.value).toBe(statusEvent({ ...INFO, status: "running" }));
+  });
+
+  it("setDashboard で内容を push し、後から開いた画面にも最初の1件で送る", async () => {
+    const server = await serve(INDEX);
+    const dashboard: DashboardData = {
+      status: "idle",
+      repo: "o/r",
+      pollInterval: 30,
+      merge: "human",
+      limits: { rejections: 3, objections: 2 },
+      blocked: [],
+      counts: [{ column: "Ready", count: 2 }],
+    };
+    const open = async () => {
+      const controller = new AbortController();
+      cleanups.push(async () => controller.abort());
+      const url = new URL("/api/events", server.url);
+      const res = await fetch(url, { signal: controller.signal });
+      return res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    };
+    const before = await open();
+    expect((await before.read()).value).toBe(statusEvent(INFO));
+    server.setDashboard(dashboard);
+    const want = statusEvent({ ...INFO, dashboard });
+    expect((await before.read()).value).toBe(want);
+    const after = await open();
+    expect((await after.read()).value).toBe(want);
   });
 
   it("閉じたあとは接続できない。2回閉じてもよい", async () => {

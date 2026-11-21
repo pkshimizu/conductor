@@ -82,6 +82,107 @@ export interface LoopDeps {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** 稼働状態が変わったときに呼ぶ（確認している間は "running"、次の確認を待つ間は "idle"）。管理画面に知らせるために start.ts がつなぐ */
   onStatus?: (status: "running" | "idle") => void;
+  /** 常駐ループの状態が変わるたびに、今の状態の全体を渡して呼ぶ。管理画面に知らせるために start.ts がつなぐ */
+  onActivity?: (activity: LoopActivity) => void;
+}
+
+/** 動いている役（管理画面の辞書 roles のキー） */
+export type ActiveRole =
+  | "tester"
+  | "implementer"
+  | "ci"
+  | "reviewer"
+  | "merge"
+  | "specifier"
+  | "decomposer";
+
+/** メモリにしかない、常駐ループの状態。起動した直後は {} */
+export interface LoopActivity {
+  /** 最後に GitHub を確認した時刻（ISO 8601） */
+  lastCheckedAt?: string;
+  /** 次に GitHub を確認する時刻（ISO 8601） */
+  nextCheckAt?: string;
+  /** 今動いている役と、その Issue。動いていなければ undefined */
+  running?: { issue: number; role: ActiveRole };
+}
+
+/** 常駐ループの状態を持ち、変わるたびに onActivity に知らせる */
+class ActivityTracker {
+  private activity: LoopActivity = {};
+
+  constructor(
+    private readonly notify: ((activity: LoopActivity) => void) | undefined,
+  ) {}
+
+  private set(next: LoopActivity): void {
+    this.activity = next;
+    this.notify?.(structuredClone(next));
+  }
+
+  /** GitHub を確認し始めた（確認の間は次の確認の時刻を持たない） */
+  checked(at: Date): void {
+    const next: LoopActivity = { lastCheckedAt: at.toISOString() };
+    if (this.activity.running !== undefined) {
+      next.running = this.activity.running;
+    }
+    this.set(next);
+  }
+
+  running(issue: number, role: ActiveRole): void {
+    this.set({ ...this.activity, running: { issue, role } });
+  }
+
+  stopped(): void {
+    if (this.activity.running === undefined) return;
+    this.set(withoutRunning(this.activity));
+  }
+
+  /** 次の確認を待つ（役は動いていない） */
+  waiting(intervalMs: number): void {
+    const last = this.activity.lastCheckedAt ?? new Date().toISOString();
+    const nextCheckAt = new Date(Date.parse(last) + intervalMs).toISOString();
+    this.set({ lastCheckedAt: last, nextCheckAt });
+  }
+}
+
+function withoutRunning(activity: LoopActivity): LoopActivity {
+  const next: LoopActivity = {};
+  if (activity.lastCheckedAt !== undefined) {
+    next.lastCheckedAt = activity.lastCheckedAt;
+  }
+  if (activity.nextCheckAt !== undefined) {
+    next.nextCheckAt = activity.nextCheckAt;
+  }
+  return next;
+}
+
+/** 役を動かす間、その役と Issue（最初の引数）を running に入れる */
+function withRole<A extends [LoopIssue, ...unknown[]], R>(
+  tracker: ActivityTracker,
+  role: ActiveRole,
+  fn: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+  return async (...args: A) => {
+    tracker.running(args[0].number, role);
+    try {
+      return await fn(...args);
+    } finally {
+      tracker.stopped();
+    }
+  };
+}
+
+/** 各役に、動いている間の状態の知らせを付ける */
+function trackRoles(deps: LoopDeps, tracker: ActivityTracker): LoopDeps {
+  return {
+    ...deps,
+    test: withRole(tracker, "tester", deps.test),
+    implement: withRole(tracker, "implementer", deps.implement),
+    checkCi: withRole(tracker, "ci", deps.checkCi),
+    review: withRole(tracker, "reviewer", deps.review),
+    merge: withRole(tracker, "merge", deps.merge),
+    syncMain: withRole(tracker, "implementer", deps.syncMain),
+  };
 }
 
 /** ループの間だけ持つ状態 */
@@ -144,7 +245,7 @@ function errorMessage(e: unknown): string {
 }
 
 /** 記録が無いときは列から段階を決める */
-function stageOf(
+export function stageOf(
   record: IssueRecord | undefined,
   column: string,
   columns: Config["github"]["columns"],
@@ -453,18 +554,23 @@ export async function runLoop(
   const state = newLoopState();
   const interval = options.intervalMs ?? LOOP_INTERVAL_MS;
   const sleep = deps.sleep ?? abortableSleep;
+  const tracker = new ActivityTracker(deps.onActivity);
+  const tracked = trackRoles(deps, tracker);
   deps.log(`開始しました（${Math.round(interval / 1000)} 秒ごとに確認）`);
   while (!signal.aborted) {
     deps.onStatus?.("running");
+    tracker.checked(new Date());
     try {
-      await tick(deps, state);
+      await tick(tracked, state);
     } catch (e) {
       deps.log(
         `確認に失敗しました（次の確認でやり直します）: ${errorMessage(e)}`,
       );
     }
+    tracker.stopped();
     if (signal.aborted) break;
     deps.onStatus?.("idle");
+    tracker.waiting(interval);
     await sleep(interval, signal);
   }
   deps.log("止まりました");
