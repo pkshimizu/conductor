@@ -18,6 +18,8 @@ export interface ProjectIssue {
   labels: string[];
   /** 状態欄の値。未設定なら null */
   column: string | null;
+  /** 開いているか（GitHub の state が OPEN） */
+  open: boolean;
   /** GitHub の更新日時（ISO 8601）。取れなければ省く */
   updatedAt?: string;
 }
@@ -129,6 +131,7 @@ export class GitHub {
           body: c.body ?? "",
           labels: (c.labels?.nodes ?? []).map((l) => l.name),
           column: item.fieldValueByName?.name ?? null,
+          open: c.state === "OPEN",
           ...(c.updatedAt === undefined ? {} : { updatedAt: c.updatedAt }),
         });
       }

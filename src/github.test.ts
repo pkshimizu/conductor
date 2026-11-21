@@ -117,7 +117,14 @@ describe("AC1: 列ごとの Issue", () => {
     const byColumn = await gh.issuesByColumn();
     expect([...byColumn.keys()]).toEqual(["Ready", "Testing", ""]);
     expect(byColumn.get("Ready")).toEqual([
-      { number: 1, title: "t1", body: "b1", labels: ["bug"], column: "Ready" },
+      {
+        number: 1,
+        title: "t1",
+        body: "b1",
+        labels: ["bug"],
+        column: "Ready",
+        open: true,
+      },
     ]);
     expect(byColumn.get("Testing")?.map((i) => i.number)).toEqual([3]);
   });
@@ -155,6 +162,8 @@ describe("AC1: 列ごとの Issue", () => {
     const byColumn = await gh.issuesByColumn({ includeClosed: true });
     expect(byColumn.get("Ready")?.[0]?.updatedAt).toBe("2026-11-20T00:00:00Z");
     expect(byColumn.get("Done")?.map((i) => i.number)).toEqual([4]);
+    expect(byColumn.get("Ready")?.[0]?.open).toBe(true);
+    expect(byColumn.get("Done")?.[0]?.open).toBe(false);
     expect((await gh.issuesByColumn()).get("Done")).toBeUndefined();
   });
 
