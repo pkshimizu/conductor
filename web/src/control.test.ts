@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  askAbort,
   askControl,
   CONTROL_PATHS,
   type ControlState,
@@ -79,5 +80,42 @@ describe("confirmControl", () => {
     );
     expect(final).toEqual({ toast: "stop" });
     expect(posts).toEqual([]);
+  });
+});
+
+describe("askAbort", () => {
+  it("中断のダイアログを Issue と役つきで出し、確認で /api/abort/<番号> に頼む", async () => {
+    const asked = askAbort({}, 12, "implementer");
+    expect(asked).toEqual({
+      dialog: "abort",
+      abort: { issue: 12, role: "implementer" },
+    });
+    expect(cancelControl(asked)).toEqual({});
+    const posts: string[] = [];
+    const final = await confirmControl(
+      asked,
+      (path) => {
+        posts.push(path);
+        return Promise.resolve({ ok: true });
+      },
+      () => {},
+    );
+    expect(posts).toEqual(["/api/abort/12"]);
+    expect(final).toEqual({
+      toast: "abort",
+      abort: { issue: 12, role: "implementer" },
+    });
+    expect(dismissToast(final)).toEqual({});
+  });
+
+  it("役がわからなくても出せる。失敗したら failed にする", async () => {
+    const asked = askAbort({}, 7);
+    expect(asked).toEqual({ dialog: "abort", abort: { issue: 7 } });
+    const ng = await confirmControl(
+      asked,
+      () => Promise.resolve({ ok: false }),
+      () => {},
+    );
+    expect(ng).toEqual({ failed: "abort", abort: { issue: 7 } });
   });
 });

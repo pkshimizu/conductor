@@ -9,6 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { blockIssue, followBlockedThreads } from "./blocked-thread.js";
 import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
+import { abortError } from "./exec.js";
 import { pendingFindings } from "./rejection.js";
 import { receiveRequirements } from "./requirements.js";
 import type { RespecDeps } from "./respec.js";
@@ -49,22 +50,35 @@ export interface LoopBoard {
   hasConflict(pr: number): Promise<boolean>;
 }
 
+/** 段階の関数に渡す、その段階の中断の signal（管理画面から中断されたら abort する） */
+export interface StepContext {
+  signal: AbortSignal;
+}
+
 export interface LoopDeps {
   config: Config;
   store: Store;
   board: LoopBoard;
   /** 入口確認。そろっていればテスト役の列へ移す */
   pickUp(issue: LoopIssue): Promise<{ accepted: boolean }>;
-  test(issue: LoopIssue): Promise<StepResult>;
-  implement(issue: LoopIssue, findings: string[]): Promise<StepResult>;
+  test(issue: LoopIssue, ctx?: StepContext): Promise<StepResult>;
+  implement(
+    issue: LoopIssue,
+    findings: string[],
+    ctx?: StepContext,
+  ): Promise<StepResult>;
   /** CI の結果を1回確かめる。通っていれば status は "passed" */
-  checkCi(issue: LoopIssue): Promise<StepResult>;
+  checkCi(issue: LoopIssue, ctx?: StepContext): Promise<StepResult>;
   /** レビュー。承認待ちのときは PR のコメントだけを確かめる */
-  review(issue: LoopIssue): Promise<StepResult>;
+  review(issue: LoopIssue, ctx?: StepContext): Promise<StepResult>;
   /** マージの途中で止まったときの続き */
-  merge(issue: LoopIssue): Promise<StepResult>;
+  merge(issue: LoopIssue, ctx?: StepContext): Promise<StepResult>;
   /** PR が main と衝突したとき、main を取り込む（衝突の内容に応じてテスト役・実装役に回す） */
-  syncMain(issue: LoopIssue, pr: number): Promise<StepResult>;
+  syncMain(
+    issue: LoopIssue,
+    pr: number,
+    ctx?: StepContext,
+  ): Promise<StepResult>;
   log(text: string): void;
   /** 窓口。config.chat があるときに start.ts がつなぐ。無ければ要件を受け取らない */
   chat?: Chat;
@@ -159,11 +173,13 @@ function withoutRunning(activity: LoopActivity): LoopActivity {
 /** 役を動かす間、その役と Issue（最初の引数）を running に入れる */
 function withRole<A extends [LoopIssue, ...unknown[]], R>(
   tracker: ActivityTracker,
+  steps: StepAborter,
   role: ActiveRole,
   fn: (...args: A) => Promise<R>,
 ): (...args: A) => Promise<R> {
   return async (...args: A) => {
     tracker.running(args[0].number, role);
+    steps.noteRole(args[0].number, role);
     try {
       return await fn(...args);
     } finally {
@@ -173,26 +189,110 @@ function withRole<A extends [LoopIssue, ...unknown[]], R>(
 }
 
 /** 各役に、動いている間の状態の知らせを付ける */
-function trackRoles(deps: LoopDeps, tracker: ActivityTracker): LoopDeps {
+function trackRoles(
+  deps: LoopDeps,
+  tracker: ActivityTracker,
+  steps: StepAborter,
+): LoopDeps {
   return {
     ...deps,
-    test: withRole(tracker, "tester", deps.test),
-    implement: withRole(tracker, "implementer", deps.implement),
-    checkCi: withRole(tracker, "ci", deps.checkCi),
-    review: withRole(tracker, "reviewer", deps.review),
-    merge: withRole(tracker, "merge", deps.merge),
-    syncMain: withRole(tracker, "implementer", deps.syncMain),
+    test: withRole(tracker, steps, "tester", deps.test),
+    implement: withRole(tracker, steps, "implementer", deps.implement),
+    checkCi: withRole(tracker, steps, "ci", deps.checkCi),
+    review: withRole(tracker, steps, "reviewer", deps.review),
+    merge: withRole(tracker, steps, "merge", deps.merge),
+    syncMain: withRole(tracker, steps, "implementer", deps.syncMain),
   };
+}
+
+/** 中断の文に出す役の名前 */
+export const ROLE_LABELS: Readonly<Record<ActiveRole, string>> = {
+  tester: "テスト役",
+  implementer: "実装役",
+  ci: "CI の確認",
+  reviewer: "レビュー役",
+  merge: "マージ",
+  specifier: "仕様化役",
+  decomposer: "分解役",
+};
+
+/**
+ * いま動いている段階と、その中断の signal を持つ（管理画面からの中断を受け付ける）。
+ * 段階ごとに begin で signal を作り、終わったら end で外す
+ */
+export class StepAborter {
+  private current:
+    | { issue: number; controller: AbortController; role?: ActiveRole }
+    | undefined;
+
+  /** Issue の段階を始める。返した controller の signal を段階の関数に渡す */
+  begin(issue: number): AbortController {
+    const controller = new AbortController();
+    this.current = { issue, controller };
+    return controller;
+  }
+
+  end(controller: AbortController): void {
+    if (this.current?.controller === controller) this.current = undefined;
+  }
+
+  /** 段階の中で動き始めた役を覚える（中断の文に出す） */
+  noteRole(issue: number, role: ActiveRole): void {
+    if (this.current?.issue === issue) this.current.role = role;
+  }
+
+  /** 中断したときに動いていた役 */
+  roleOf(controller: AbortController): ActiveRole | undefined {
+    return this.current?.controller === controller
+      ? this.current.role
+      : undefined;
+  }
+
+  /** いま動いている Issue の番号。無ければ undefined */
+  running(): number | undefined {
+    return this.current?.issue;
+  }
+
+  /** issue の段階が動いていればすぐ中断する。中断したら true */
+  abort(issue: number): boolean {
+    const current = this.current;
+    if (current?.issue !== issue) return false;
+    current.controller.abort(abortError("管理画面から中断しました"));
+    return true;
+  }
 }
 
 /** ループの間だけ持つ状態 */
 export interface LoopState {
   /** Issue ごとの、続けて失敗した回数 */
   failures: Map<number, number>;
+  /** いま動いている段階（管理画面からの中断を受け付ける） */
+  steps: StepAborter;
 }
 
-export function newLoopState(): LoopState {
-  return { failures: new Map() };
+export function newLoopState(
+  steps: StepAborter = new StepAborter(),
+): LoopState {
+  return { failures: new Map(), steps };
+}
+
+/** 管理画面から中断したときの、止まった理由 */
+export function abortReason(role: ActiveRole | undefined): string {
+  return role === undefined
+    ? "管理画面から中断しました。"
+    : `管理画面から中断しました（${ROLE_LABELS[role]}の作業中）。`;
+}
+
+/** 管理画面から中断したときの Issue のコメント */
+export function abortComment(
+  role: ActiveRole | undefined,
+  ready: string,
+): string {
+  return [
+    abortReason(role),
+    "",
+    `それまでの変更は Issue のブランチに残しています。続けるときは ${ready} 列に戻してください。`,
+  ].join("\n");
 }
 
 export function failureComment(
@@ -261,12 +361,13 @@ export function stageOf(
 async function syncIfConflict(
   deps: LoopDeps,
   issue: LoopIssue,
+  ctx: StepContext,
 ): Promise<StepResult | undefined> {
   const { config, store, board } = deps;
   const key: IssueKey = { repo: config.github.repo, issue: issue.number };
   const pr = (await store.get(key))?.pr;
   if (pr === undefined || !(await board.hasConflict(pr))) return undefined;
-  return deps.syncMain(issue, pr);
+  return deps.syncMain(issue, pr, ctx);
 }
 
 /** 1段階進める */
@@ -274,57 +375,98 @@ async function advance(
   deps: LoopDeps,
   issue: LoopIssue,
   stage: Stage,
+  ctx: StepContext,
 ): Promise<StepResult> {
   const key: IssueKey = { repo: deps.config.github.repo, issue: issue.number };
   switch (stage) {
     case "testing":
-      return deps.test(issue);
+      return deps.test(issue, ctx);
     case "implementing":
-      return deps.implement(issue, await pendingFindings(deps.store, key));
+      return deps.implement(issue, await pendingFindings(deps.store, key), ctx);
     case "ci": {
-      const synced = await syncIfConflict(deps, issue);
+      const synced = await syncIfConflict(deps, issue, ctx);
       if (synced) return synced;
-      const ci = await deps.checkCi(issue);
-      return ci.status === "passed" ? deps.review(issue) : ci;
+      const ci = await deps.checkCi(issue, ctx);
+      if (ci.status !== "passed") return ci;
+      if (ctx.signal.aborted) throw abortError();
+      return deps.review(issue, ctx);
     }
     case "reviewing":
     case "approving":
-      return (await syncIfConflict(deps, issue)) ?? deps.review(issue);
+      return (
+        (await syncIfConflict(deps, issue, ctx)) ?? deps.review(issue, ctx)
+      );
     case "merging":
-      return deps.merge(issue);
+      return deps.merge(issue, ctx);
   }
 }
 
-/** 失敗を数える。続けて MAX_FAILURES 回失敗したら Blocked にしてメンションする */
+/** 管理画面から中断された段階を、失敗に数えずに Blocked にする */
+async function blockAborted(
+  deps: LoopDeps,
+  state: LoopState,
+  issue: number,
+  role: ActiveRole | undefined,
+): Promise<void> {
+  state.failures.delete(issue);
+  deps.log(`#${issue}: ${abortReason(role)}`);
+  try {
+    await blockIssue(deps, issue, {
+      body: abortComment(role, deps.config.github.columns.ready),
+      reason: abortReason(role),
+    });
+  } catch (e) {
+    deps.log(`#${issue}: Blocked への移動に失敗: ${errorMessage(e)}`);
+  }
+}
+
+/**
+ * 失敗を数える。続けて MAX_FAILURES 回失敗したら Blocked にしてメンションする。
+ * 管理画面から中断されたら、失敗に数えずに Blocked にする
+ */
 async function attempt(
   deps: LoopDeps,
   state: LoopState,
   issue: LoopIssue,
-  step: () => Promise<StepResult>,
+  step: (ctx: StepContext) => Promise<StepResult>,
 ): Promise<void> {
   const n = issue.number;
+  const controller = state.steps.begin(n);
+  const ctx: StepContext = { signal: controller.signal };
+  let result: StepResult | undefined;
+  let error: { e: unknown } | undefined;
   try {
-    const r = await step();
-    state.failures.delete(n);
-    deps.log(`#${n}: ${r.status}`);
+    result = await step(ctx);
   } catch (e) {
-    const message = errorMessage(e);
-    const count = (state.failures.get(n) ?? 0) + 1;
-    deps.log(`#${n}: 失敗（${count}/${MAX_FAILURES} 回目）: ${message}`);
-    if (count < MAX_FAILURES) {
-      state.failures.set(n, count);
-      return;
-    }
+    error = { e };
+  }
+  const role = state.steps.roleOf(controller);
+  state.steps.end(controller);
+  if (controller.signal.aborted) {
+    await blockAborted(deps, state, n, role);
+    return;
+  }
+  if (error === undefined) {
     state.failures.delete(n);
-    try {
-      // 窓口があればメンションせず、次の確認で質問チャンネルのスレッドで確かめる
-      await blockIssue(deps, n, {
-        body: failureComment(message, count, deps.config.github.columns.ready),
-        reason: message,
-      });
-    } catch (e2) {
-      deps.log(`#${n}: Blocked への移動に失敗: ${errorMessage(e2)}`);
-    }
+    deps.log(`#${n}: ${result?.status ?? ""}`);
+    return;
+  }
+  const message = errorMessage(error.e);
+  const count = (state.failures.get(n) ?? 0) + 1;
+  deps.log(`#${n}: 失敗（${count}/${MAX_FAILURES} 回目）: ${message}`);
+  if (count < MAX_FAILURES) {
+    state.failures.set(n, count);
+    return;
+  }
+  state.failures.delete(n);
+  try {
+    // 窓口があればメンションせず、次の確認で質問チャンネルのスレッドで確かめる
+    await blockIssue(deps, n, {
+      body: failureComment(message, count, deps.config.github.columns.ready),
+      reason: message,
+    });
+  } catch (e2) {
+    deps.log(`#${n}: Blocked への移動に失敗: ${errorMessage(e2)}`);
   }
 }
 
@@ -516,24 +658,29 @@ export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
 
   // 承認待ちは作業中に数えず、毎回コメントだけを確かめる
   for (const { issue } of working.filter((w) => isApproving(w.issue.number))) {
-    await attempt(deps, state, issue, () => advance(deps, issue, "approving"));
+    await attempt(deps, state, issue, (ctx) =>
+      advance(deps, issue, "approving", ctx),
+    );
   }
 
   const active = working.find((w) => !isApproving(w.issue.number));
   if (active) {
     const { issue, column } = active;
     const stage = stageOf(records.get(issue.number), column, columns);
-    await attempt(deps, state, issue, () => advance(deps, issue, stage));
+    await attempt(deps, state, issue, (ctx) =>
+      advance(deps, issue, stage, ctx),
+    );
     return;
   }
 
   const ready = inColumn(columns.ready)[0]?.issue;
   if (!ready) return;
-  await attempt(deps, state, ready, async () => {
+  await attempt(deps, state, ready, async (ctx) => {
     const r = await deps.pickUp(ready);
     if (!r.accepted) return { status: "blocked" };
+    if (ctx.signal.aborted) throw abortError();
     const record = await store.get({ repo, issue: ready.number });
-    return advance(deps, ready, record?.checkpoint?.stage ?? "testing");
+    return advance(deps, ready, record?.checkpoint?.stage ?? "testing", ctx);
   });
 }
 
@@ -549,13 +696,17 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 export async function runLoop(
   deps: LoopDeps,
   signal: AbortSignal,
-  options: { intervalMs?: number } = {},
+  options: {
+    intervalMs?: number;
+    /** 管理画面からの中断を受け付ける（supervisor.ts が渡す）。省略したら中から作る */
+    steps?: StepAborter;
+  } = {},
 ): Promise<void> {
-  const state = newLoopState();
+  const state = newLoopState(options.steps);
   const interval = options.intervalMs ?? LOOP_INTERVAL_MS;
   const sleep = deps.sleep ?? abortableSleep;
   const tracker = new ActivityTracker(deps.onActivity);
-  const tracked = trackRoles(deps, tracker);
+  const tracked = trackRoles(deps, tracker, state.steps);
   deps.log(`開始しました（${Math.round(interval / 1000)} 秒ごとに確認）`);
   while (!signal.aborted) {
     deps.onStatus?.("running");

@@ -8,7 +8,7 @@ import type { z } from "zod";
 import { blockIssue } from "./blocked-thread.js";
 import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import type { Config } from "./config.js";
-import type { ExecResult, Shell } from "./exec.js";
+import { type ExecResult, isAbortError, type Shell } from "./exec.js";
 import type { Git } from "./git.js";
 import { matchesAny } from "./git.js";
 import { listAcceptance } from "./intake.js";
@@ -73,6 +73,8 @@ export interface ImplementerDeps {
   /** .conductor/roles/implementer.md の中身 */
   instructions: string;
   model?: string;
+  /** 中断の signal。来たらそれまでの変更をブランチに push してから AbortError を投げる */
+  signal?: AbortSignal;
 }
 
 export type ImplementerResult =
@@ -237,6 +239,43 @@ export function pullRequestBody(issue: TesterIssue, out: ImplementerOutput) {
   ].join("\n");
 }
 
+/**
+ * 中断されたときの後始末。変えてはいけないファイルの変更は戻し、
+ * 残りをコミットして Issue のブランチに push する
+ */
+export async function keepPartialWork(
+  deps: {
+    config: Config;
+    git: Pick<
+      Git,
+      | "changedFiles"
+      | "discard"
+      | "commit"
+      | "treeHash"
+      | "push"
+      | "startBranch"
+    >;
+  },
+  issue: TesterIssue,
+  branch: string,
+  protectedHash: string,
+): Promise<void> {
+  const { git } = deps;
+  const forbidden = forbiddenGlobs(deps.config);
+  const changed = await git.changedFiles();
+  const touched = changed.filter((f) => matchesAny(f, forbidden));
+  if (touched.length > 0) await git.discard(touched);
+  const rest = changed.filter((f) => !touched.includes(f));
+  if (rest.length === 0) return;
+  await git.commit(rest, `wip: #${issue.number} の実装（中断）`);
+  if ((await git.treeHash("HEAD", forbidden)) !== protectedHash) {
+    // 保護対象が変わってしまったら残さない
+    await git.startBranch(branch, branch);
+    return;
+  }
+  await git.push(branch);
+}
+
 /** 実装役を1回分進める。指摘（findings）があれば渡す */
 export async function runImplementer(
   deps: ImplementerDeps,
@@ -272,18 +311,28 @@ export async function runImplementer(
   await store.update(key, { branch, checkpoint: { stage: "implementing" } });
   await board.moveIssue(issue.number, columns.implementing);
 
-  const result = await deps.run({
-    role: "implementer",
-    cwd: deps.repoDir,
-    systemPrompt: [IMPLEMENTER_RULES, deps.instructions]
-      .filter(Boolean)
-      .join("\n\n"),
-    prompt: implementerPrompt(config, issue, findings),
-    schema: implementerOutputSchema,
-    allow: implementerAllow(config),
-    deny: implementerDeny(config),
-    ...(deps.model ? { model: deps.model } : {}),
-  });
+  let result: RoleResult<ImplementerOutput>;
+  try {
+    result = await deps.run({
+      role: "implementer",
+      cwd: deps.repoDir,
+      systemPrompt: [IMPLEMENTER_RULES, deps.instructions]
+        .filter(Boolean)
+        .join("\n\n"),
+      prompt: implementerPrompt(config, issue, findings),
+      schema: implementerOutputSchema,
+      allow: implementerAllow(config),
+      deny: implementerDeny(config),
+      ...(deps.model ? { model: deps.model } : {}),
+      ...(deps.signal ? { signal: deps.signal } : {}),
+    });
+  } catch (e) {
+    if (isAbortError(e) || deps.signal?.aborted === true) {
+      // 中断されたら、それまでの変更をブランチに残す（人が Ready に戻したら続きから）
+      await keepPartialWork(deps, issue, branch, record.protectedHash);
+    }
+    throw e;
+  }
   const out = result.output;
 
   if (out.verdict === "objection") {

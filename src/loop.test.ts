@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
 import {
+  abortReason,
   MAX_FAILURES,
   runLoop,
   newLoopState,
@@ -44,7 +45,11 @@ function setup(
   const results: Partial<Record<string, () => Promise<StepResult>>> = {};
   const step =
     (name: string) =>
-    (i: LoopIssue, ...rest: unknown[]): Promise<StepResult> => {
+    (i: LoopIssue, ...args: unknown[]): Promise<StepResult> => {
+      // 最後の引数の中断の signal（StepContext）は記録しない
+      const rest = args.filter(
+        (a) => !(typeof a === "object" && a !== null && "signal" in a),
+      );
       calls.push(
         `${name} #${i.number}${rest.length ? ` ${JSON.stringify(rest[0])}` : ""}`,
       );
@@ -446,6 +451,48 @@ describe("tick", () => {
     t.results.test = () => Promise.reject(new Error("x"));
     for (let i = 1; i < MAX_FAILURES; i++) await tick(t.deps, state);
     expect(t.moves).toEqual([]);
+  });
+});
+
+describe("管理画面からの中断（StepAborter）", () => {
+  it("動いている段階に signal を渡し、中断されたら失敗に数えずに Blocked にする", async () => {
+    const t = setup({ Testing: [3] });
+    const state = newLoopState();
+    t.results.test = () => {
+      expect(state.steps.running()).toBe(3);
+      expect(state.steps.abort(4)).toBe(false);
+      expect(state.steps.abort(3)).toBe(true);
+      return Promise.reject(new Error("中断しました"));
+    };
+    await tick(t.deps, state);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    expect(t.comments).toHaveLength(1);
+    expect(t.comments[0]?.mention).toBe(true);
+    expect(t.comments[0]?.body).toContain("管理画面から中断しました");
+    expect(t.comments[0]?.body).not.toContain("失敗");
+    const record = await t.store.get({ repo: REPO, issue: 3 });
+    expect(record?.blockedReason).toBe("管理画面から中断しました。");
+    expect(state.failures.size).toBe(0);
+    expect(state.steps.running()).toBeUndefined();
+  });
+
+  it("段階の関数に中断の signal（StepContext）を渡す", async () => {
+    const t = setup({ Testing: [3] });
+    const seen: unknown[] = [];
+    t.deps.test = (_i, ctx) => {
+      seen.push(ctx?.signal);
+      return Promise.resolve({ status: "ok" });
+    };
+    await tick(t.deps, newLoopState());
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("役の名前を中断の理由に入れる", () => {
+    expect(abortReason("implementer")).toBe(
+      "管理画面から中断しました（実装役の作業中）。",
+    );
+    expect(abortReason(undefined)).toBe("管理画面から中断しました。");
   });
 });
 

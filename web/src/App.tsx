@@ -4,6 +4,7 @@
  */
 import { type ReactElement, useEffect, useState } from "react";
 import {
+  askAbort,
   askControl,
   cancelControl,
   type ControlState,
@@ -168,6 +169,9 @@ export function App(): ReactElement | null {
           lang={lang}
           now={now}
           onNavigate={navigate}
+          onAbort={(issue, role) =>
+            setControl((prev) => askAbort(prev, issue, role))
+          }
         />
       ) : detail !== undefined ? (
         <TaskDetail

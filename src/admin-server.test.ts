@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  abortIssueOf,
+  type AdminControl,
   type AdminInfo,
   type AdminServer,
   assetFile,
@@ -119,10 +121,7 @@ describe("isLocalOrigin", () => {
 });
 
 describe("停止と再起動の POST", () => {
-  async function serveControl(control: {
-    stop(): Promise<void>;
-    restart(): Promise<void>;
-  }) {
+  async function serveControl(control: AdminControl) {
     const dir = await mkdtemp(join(tmpdir(), "conductor-admin-unit-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
     const logs: string[] = [];
@@ -194,6 +193,47 @@ describe("停止と再起動の POST", () => {
       headers: { origin: new URL(server.url).origin },
     });
     expect(res.status).toBe(404);
+  });
+
+  it("POST /api/abort/<番号> で control.abort(番号) を呼ぶ。ほかの Origin は 403", async () => {
+    const calls: number[] = [];
+    const s = await serveControl({
+      stop: () => Promise.resolve(),
+      restart: () => Promise.resolve(),
+      abort: (issue) => {
+        calls.push(issue);
+        return issue === 99
+          ? Promise.reject(new Error("処理中ではありません"))
+          : Promise.resolve();
+      },
+    });
+    expect((await s.post("/api/abort/12", "http://evil.example")).status).toBe(
+      403,
+    );
+    expect(calls).toEqual([]);
+    expect((await s.post("/api/abort/12", s.origin)).status).toBe(204);
+    expect(calls).toEqual([12]);
+    expect((await s.post("/api/abort/99", s.origin)).status).toBe(500);
+    expect(s.logs.some((l) => l.includes("処理中ではありません"))).toBe(true);
+    expect((await s.post("/api/abort/x", s.origin)).status).toBe(405);
+    expect(calls).toEqual([12, 99]);
+  });
+
+  it("abort が無ければ /api/abort は 404", async () => {
+    const s = await serveControl({
+      stop: () => Promise.resolve(),
+      restart: () => Promise.resolve(),
+    });
+    expect((await s.post("/api/abort/12", s.origin)).status).toBe(404);
+  });
+});
+
+describe("abortIssueOf", () => {
+  it("/api/abort/<番号> の番号を返す", () => {
+    expect(abortIssueOf("/api/abort/12")).toBe(12);
+    expect(abortIssueOf("/api/abort/0")).toBeUndefined();
+    expect(abortIssueOf("/api/abort/")).toBeUndefined();
+    expect(abortIssueOf("/api/abort/1/2")).toBeUndefined();
   });
 });
 

@@ -3,8 +3,9 @@
  * ブラウザの globals（window など）には触らない（react-dom/server でも描ける）
  */
 import type { CSSProperties, MouseEvent, ReactElement, ReactNode } from "react";
-import type { ControlKind, ControlState } from "./control.js";
+import type { AbortTarget, ControlKind, ControlState } from "./control.js";
 import {
+  fill,
   type Lang,
   type Messages,
   MESSAGES,
@@ -192,10 +193,29 @@ function stopButtonStyle(disabled: boolean): CSSProperties {
 function dialogText(
   t: Messages,
   kind: ControlKind,
+  target?: AbortTarget,
 ): { title: string; body: string; ok: string } {
+  if (kind === "abort") {
+    const role = target?.role === undefined ? t.someRole : t.roles[target.role];
+    return {
+      title: fill(t.abortTitle, { n: target?.issue ?? "" }),
+      body: fill(t.abortBody, { role }),
+      ok: t.abortOk,
+    };
+  }
   return kind === "restart"
     ? { title: t.restartTitle, body: t.restartBody, ok: t.restartOk }
     : { title: t.stopTitle, body: t.stopBody, ok: t.stopOk };
+}
+
+/** 知らせの文言 */
+function toastText(
+  t: Messages,
+  kind: ControlKind,
+  target: AbortTarget | undefined,
+): string {
+  if (kind === "abort") return fill(t.toastAbort, { n: target?.issue ?? "" });
+  return kind === "restart" ? t.toastRestart : t.toastStop;
 }
 
 const ROOT: CSSProperties = {
@@ -535,16 +555,17 @@ function WarningIcon(): ReactElement {
   );
 }
 
-/** 再起動・停止の確認のダイアログ */
+/** 再起動・停止・中断の確認のダイアログ */
 function ControlDialog(props: {
   t: Messages;
   kind: ControlKind;
+  target: AbortTarget | undefined;
   onCancel: (() => void) | undefined;
   onConfirm: (() => void) | undefined;
 }): ReactElement {
   const { t, kind } = props;
-  const text = dialogText(t, kind);
-  const danger = kind === "stop";
+  const text = dialogText(t, kind, props.target);
+  const danger = kind === "stop" || kind === "abort";
   return (
     <div style={OVERLAY}>
       <div
@@ -736,18 +757,20 @@ export function Layout(props: LayoutProps): ReactElement {
       {control.toast !== undefined && (
         <div role="status" style={TOAST}>
           <CheckIcon />
-          {control.toast === "restart" ? t.toastRestart : t.toastStop}
+          {toastText(t, control.toast, control.abort)}
         </div>
       )}
 
-      {control.dialog !== undefined && (
-        <ControlDialog
-          t={t}
-          kind={control.dialog}
-          onCancel={props.onCancel}
-          onConfirm={props.onConfirm}
-        />
-      )}
+      {control.dialog !== undefined &&
+        (control.dialog !== "abort" || control.abort !== undefined) && (
+          <ControlDialog
+            t={t}
+            kind={control.dialog}
+            target={control.abort}
+            onCancel={props.onCancel}
+            onConfirm={props.onConfirm}
+          />
+        )}
     </div>
   );
 }

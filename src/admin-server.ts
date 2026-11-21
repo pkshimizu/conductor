@@ -22,6 +22,14 @@ export type AdminStatus = "running" | "idle" | "stopping" | "stopped";
 export interface AdminControl {
   stop(): Promise<void>;
   restart(): Promise<void>;
+  /** 処理中の Issue の作業を中断する（受け付けたら resolve。役が終わるのは待たない） */
+  abort?(issue: number): Promise<void>;
+}
+
+/** POST /api/abort/<番号> の番号。ほかのパスなら undefined */
+export function abortIssueOf(pathname: string): number | undefined {
+  const m = /^\/api\/abort\/([1-9]\d{0,9})$/.exec(pathname);
+  return m === null ? undefined : Number(m[1]);
 }
 
 export interface AdminServerOptions {
@@ -135,7 +143,7 @@ export function isLocalOrigin(
 }
 
 /** 停止・再起動の POST の URL */
-const CONTROL_ROUTES = new Map<string, keyof AdminControl>([
+const CONTROL_ROUTES = new Map<string, "stop" | "restart">([
   ["/api/stop", "stop"],
   ["/api/restart", "restart"],
 ]);
@@ -232,11 +240,11 @@ export async function startAdminServer(
     req.on("close", () => clients.delete(res));
   };
 
-  /** POST /api/stop・/api/restart。終わってから 204 を返す */
+  /** POST /api/stop・/api/restart・/api/abort/<番号>。終わってから 204 を返す */
   const handleControl = async (
     req: IncomingMessage,
     res: ServerResponse,
-    action: keyof AdminControl,
+    action: "stop" | "restart" | { abort: number },
   ) => {
     if (req.method !== "POST") {
       res.setHeader("allow", "POST");
@@ -252,11 +260,22 @@ export async function startAdminServer(
       sendText(res, 404, "Not Found");
       return;
     }
+    if (typeof action !== "string" && control.abort === undefined) {
+      sendText(res, 404, "Not Found");
+      return;
+    }
     try {
-      await control[action]();
+      if (typeof action === "string") await control[action]();
+      else await control.abort?.(action.abort);
     } catch (e) {
+      const what =
+        typeof action === "string"
+          ? action === "stop"
+            ? "停止"
+            : "再起動"
+          : `#${action.abort} の中断`;
       options.log(
-        `管理画面からの${action === "stop" ? "停止" : "再起動"}に失敗しました: ${e instanceof Error ? e.message : String(e)}`,
+        `管理画面からの${what}に失敗しました: ${e instanceof Error ? e.message : String(e)}`,
       );
       sendText(res, 500, "Internal Server Error");
       return;
@@ -274,6 +293,11 @@ export async function startAdminServer(
     const action = CONTROL_ROUTES.get(pathname);
     if (action !== undefined) {
       await handleControl(req, res, action);
+      return;
+    }
+    const abortIssue = abortIssueOf(pathname);
+    if (abortIssue !== undefined) {
+      await handleControl(req, res, { abort: abortIssue });
       return;
     }
     if (req.method !== "GET" && req.method !== "HEAD") {

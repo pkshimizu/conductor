@@ -6,6 +6,7 @@ import {
   implementerAllow,
   implementerDeny,
   implementerPrompt,
+  keepPartialWork,
   outputTail,
   runImplementer,
   type ImplementerDeps,
@@ -470,5 +471,66 @@ describe("recordRejection / pendingFindings", () => {
       text: "直した",
     });
     expect(await pendingFindings(s.store, KEY)).toEqual([]);
+  });
+});
+
+describe("keepPartialWork", () => {
+  function fakeGit(changed: string[], hash: string) {
+    const calls: string[] = [];
+    const git = {
+      changedFiles: () => Promise.resolve(changed),
+      discard: (paths: readonly string[]) => {
+        calls.push(`discard ${paths.join(",")}`);
+        return Promise.resolve();
+      },
+      commit: (paths: readonly string[]) => {
+        calls.push(`commit ${paths.join(",")}`);
+        return Promise.resolve("c1");
+      },
+      treeHash: () => Promise.resolve(hash),
+      push: (branch: string) => {
+        calls.push(`push ${branch}`);
+        return Promise.resolve();
+      },
+      startBranch: (branch: string) => {
+        calls.push(`reset ${branch}`);
+        return Promise.resolve();
+      },
+    };
+    return { git, calls };
+  }
+
+  it("変えてはいけないファイルを戻し、残りをコミットしてブランチに push する", async () => {
+    const g = fakeGit(["e2e/a.spec.ts", "src/a.ts"], "h");
+    await keepPartialWork(
+      { config: makeConfig(), git: g.git },
+      ISSUE,
+      "b",
+      "h",
+    );
+    expect(g.calls).toEqual([
+      "discard e2e/a.spec.ts",
+      "commit src/a.ts",
+      "push b",
+    ]);
+  });
+
+  it("変更が無ければ何もしない。保護対象が変わっていたら push しない", async () => {
+    const none = fakeGit([], "h");
+    await keepPartialWork(
+      { config: makeConfig(), git: none.git },
+      ISSUE,
+      "b",
+      "h",
+    );
+    expect(none.calls).toEqual([]);
+    const broken = fakeGit(["src/a.ts"], "x");
+    await keepPartialWork(
+      { config: makeConfig(), git: broken.git },
+      ISSUE,
+      "b",
+      "h",
+    );
+    expect(broken.calls).toEqual(["commit src/a.ts", "reset b"]);
   });
 });
