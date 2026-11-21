@@ -15,8 +15,14 @@ import type { DashboardData } from "./dashboard-data.js";
 import type { TaskDetailData } from "./task-detail-data.js";
 import type { TasksData } from "./tasks-data.js";
 
-/** 稼働状態（動作中・待機中・停止中） */
-export type AdminStatus = "running" | "idle" | "stopped";
+/** 稼働状態（動作中・待機中・停止しています・停止中） */
+export type AdminStatus = "running" | "idle" | "stopping" | "stopped";
+
+/** 停止と再起動（start.ts が Supervisor をつなぐ） */
+export interface AdminControl {
+  stop(): Promise<void>;
+  restart(): Promise<void>;
+}
 
 export interface AdminServerOptions {
   /** config.github.repo */
@@ -28,6 +34,8 @@ export interface AdminServerOptions {
   log(text: string): void;
   /** 画面のビルド結果のフォルダ。省略したら同梱のもの（dist/admin） */
   assetsDir?: string;
+  /** 停止と再起動（start.ts が Supervisor をつなぐ） */
+  control?: AdminControl;
 }
 
 export interface AdminServer {
@@ -112,6 +120,25 @@ export function assetFile(
 export function isLocalHost(host: string | undefined, port: number): boolean {
   return host === `${HOST}:${port}` || host === `localhost:${port}`;
 }
+
+/**
+ * Origin ヘッダーが管理画面そのものか。
+ * 別のサイトからの送信や Origin の無い要求は、停止・再起動を受け付けない
+ */
+export function isLocalOrigin(
+  origin: string | undefined,
+  port: number,
+): boolean {
+  return (
+    origin === `http://${HOST}:${port}` || origin === `http://localhost:${port}`
+  );
+}
+
+/** 停止・再起動の POST の URL */
+const CONTROL_ROUTES = new Map<string, keyof AdminControl>([
+  ["/api/stop", "stop"],
+  ["/api/restart", "restart"],
+]);
 
 /** 画面に知らせる内容 */
 export interface AdminInfo {
@@ -205,9 +232,48 @@ export async function startAdminServer(
     req.on("close", () => clients.delete(res));
   };
 
+  /** POST /api/stop・/api/restart。終わってから 204 を返す */
+  const handleControl = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    action: keyof AdminControl,
+  ) => {
+    if (req.method !== "POST") {
+      res.setHeader("allow", "POST");
+      sendText(res, 405, "Method Not Allowed");
+      return;
+    }
+    if (!isLocalOrigin(req.headers.origin, port)) {
+      sendText(res, 403, "Forbidden");
+      return;
+    }
+    const { control } = options;
+    if (control === undefined) {
+      sendText(res, 404, "Not Found");
+      return;
+    }
+    try {
+      await control[action]();
+    } catch (e) {
+      options.log(
+        `管理画面からの${action === "stop" ? "停止" : "再起動"}に失敗しました: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      sendText(res, 500, "Internal Server Error");
+      return;
+    }
+    res.writeHead(204);
+    res.end();
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     if (!isLocalHost(req.headers.host, port)) {
       sendText(res, 403, "Forbidden");
+      return;
+    }
+    const { pathname } = new URL(req.url ?? "/", `http://${HOST}`);
+    const action = CONTROL_ROUTES.get(pathname);
+    if (action !== undefined) {
+      await handleControl(req, res, action);
       return;
     }
     if (req.method !== "GET" && req.method !== "HEAD") {
@@ -215,7 +281,6 @@ export async function startAdminServer(
       sendText(res, 405, "Method Not Allowed");
       return;
     }
-    const { pathname } = new URL(req.url ?? "/", `http://${HOST}`);
     if (pathname === "/api/events") {
       openEvents(req, res);
       return;

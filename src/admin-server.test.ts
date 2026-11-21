@@ -9,6 +9,7 @@ import {
   assetFile,
   contentType,
   isLocalHost,
+  isLocalOrigin,
   isScreenPath,
   startAdminServer,
   statusEvent,
@@ -103,6 +104,96 @@ describe("isLocalHost", () => {
     expect(isLocalHost("evil.example:8080", 8080)).toBe(false);
     expect(isLocalHost("127.0.0.1:9090", 8080)).toBe(false);
     expect(isLocalHost(undefined, 8080)).toBe(false);
+  });
+});
+
+describe("isLocalOrigin", () => {
+  it("管理画面そのものの Origin だけを受け付ける", () => {
+    expect(isLocalOrigin("http://127.0.0.1:8080", 8080)).toBe(true);
+    expect(isLocalOrigin("http://localhost:8080", 8080)).toBe(true);
+    expect(isLocalOrigin("http://evil.example", 8080)).toBe(false);
+    expect(isLocalOrigin("http://127.0.0.1:9090", 8080)).toBe(false);
+    expect(isLocalOrigin("null", 8080)).toBe(false);
+    expect(isLocalOrigin(undefined, 8080)).toBe(false);
+  });
+});
+
+describe("停止と再起動の POST", () => {
+  async function serveControl(control: {
+    stop(): Promise<void>;
+    restart(): Promise<void>;
+  }) {
+    const dir = await mkdtemp(join(tmpdir(), "conductor-admin-unit-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const logs: string[] = [];
+    const server = await startAdminServer({
+      ...INFO,
+      log: (text) => logs.push(text),
+      assetsDir: dir,
+      control,
+    });
+    cleanups.push(() => server.close());
+    const post = (path: string, origin?: string) =>
+      fetch(new URL(path, server.url), {
+        method: "POST",
+        headers: origin === undefined ? {} : { origin },
+      });
+    return { server, logs, post, origin: new URL(server.url).origin };
+  }
+
+  it("管理画面の Origin なら control を呼び、終わってから 204 を返す", async () => {
+    const calls: string[] = [];
+    const s = await serveControl({
+      stop: () => {
+        calls.push("stop");
+        return Promise.resolve();
+      },
+      restart: () => {
+        calls.push("restart");
+        return Promise.resolve();
+      },
+    });
+    expect((await s.post("/api/stop", s.origin)).status).toBe(204);
+    expect((await s.post("/api/restart", s.origin)).status).toBe(204);
+    const local = `http://localhost:${s.server.port}`;
+    expect((await s.post("/api/stop", local)).status).toBe(204);
+    expect(calls).toEqual(["stop", "restart", "stop"]);
+  });
+
+  it("ほかの Origin や Origin の無い POST、GET は受け付けない", async () => {
+    const calls: string[] = [];
+    const s = await serveControl({
+      stop: () => {
+        calls.push("stop");
+        return Promise.resolve();
+      },
+      restart: () => {
+        calls.push("restart");
+        return Promise.resolve();
+      },
+    });
+    expect((await s.post("/api/stop", "http://evil.example")).status).toBe(403);
+    expect((await s.post("/api/restart")).status).toBe(403);
+    expect((await fetch(new URL("/api/stop", s.server.url))).status).toBe(405);
+    expect(calls).toEqual([]);
+  });
+
+  it("control が失敗したら 500 にしてログに残す", async () => {
+    const s = await serveControl({
+      stop: () => Promise.resolve(),
+      restart: () => Promise.reject(new Error("設定に誤りがあります")),
+    });
+    expect((await s.post("/api/restart", s.origin)).status).toBe(500);
+    expect(s.logs.some((l) => l.includes("設定に誤りがあります"))).toBe(true);
+  });
+
+  it("control が無ければ 404", async () => {
+    const server = await serve(INDEX);
+    const res = await fetch(new URL("/api/stop", server.url), {
+      method: "POST",
+      headers: { origin: new URL(server.url).origin },
+    });
+    expect(res.status).toBe(404);
   });
 });
 

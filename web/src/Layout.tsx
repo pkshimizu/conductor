@@ -3,7 +3,14 @@
  * ブラウザの globals（window など）には触らない（react-dom/server でも描ける）
  */
 import type { CSSProperties, MouseEvent, ReactElement, ReactNode } from "react";
-import { type Lang, MESSAGES, type Status, statusLabel } from "./i18n.js";
+import type { ControlKind, ControlState } from "./control.js";
+import {
+  type Lang,
+  type Messages,
+  MESSAGES,
+  type Status,
+  statusLabel,
+} from "./i18n.js";
 import { themeStyle } from "./palette.js";
 import { type Menu, MENU_PATHS, menuOf } from "./routes.js";
 import type { Scheme } from "./theme.js";
@@ -18,6 +25,14 @@ export interface LayoutProps {
   status: Status;
   onLanguage?: (lang: Lang) => void;
   onNavigate?: (path: string) => void;
+  /** 出しているダイアログと知らせ */
+  control?: ControlState;
+  /** ヘッダーの「再起動」「停止」 */
+  onAsk?: (kind: ControlKind) => void;
+  /** ダイアログの「キャンセル」 */
+  onCancel?: () => void;
+  /** ダイアログの「再起動する」「停止する」 */
+  onConfirm?: () => void;
   /** 各画面の中身 */
   children?: ReactNode;
 }
@@ -27,8 +42,161 @@ const MONO = "'JetBrains Mono', ui-monospace, monospace";
 const STATUS_TONE: Readonly<Record<Status, string>> = {
   running: "green",
   idle: "blue",
+  stopping: "amber",
   stopped: "red",
 };
+
+const CONTROL_BUTTON: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  height: 32,
+  padding: "0 12px",
+  borderRadius: 7,
+  border: "1px solid var(--border2)",
+  background: "var(--panel)",
+  color: "var(--fg)",
+  font: "inherit",
+  fontSize: 13,
+  fontWeight: 500,
+  cursor: "pointer",
+};
+
+const DIVIDER: CSSProperties = {
+  width: 1,
+  height: 20,
+  background: "var(--border)",
+  margin: "0 4px",
+};
+
+const TOAST: CSSProperties = {
+  position: "absolute",
+  top: 68,
+  right: 32,
+  zIndex: 20,
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  padding: "10px 14px",
+  borderRadius: 9,
+  background: "var(--fg)",
+  color: "var(--bg)",
+  fontSize: 13,
+  fontWeight: 500,
+  boxShadow: "var(--shadowLg)",
+};
+
+const OVERLAY: CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  zIndex: 30,
+  background: "var(--overlay)",
+};
+
+const DIALOG: CSSProperties = {
+  position: "absolute",
+  top: 120,
+  left: "50%",
+  transform: "translateX(-50%)",
+  width: 440,
+  maxWidth: "calc(100% - 32px)",
+  boxSizing: "border-box",
+  background: "var(--panel)",
+  color: "var(--fg)",
+  border: "1px solid var(--border)",
+  borderRadius: 14,
+  boxShadow: "var(--shadowLg)",
+  display: "flex",
+  flexDirection: "column",
+};
+
+const DIALOG_HEAD: CSSProperties = {
+  padding: "20px 22px 0",
+  display: "flex",
+  gap: 14,
+  alignItems: "flex-start",
+};
+
+const DANGER_MARK: CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  flex: "none",
+  display: "grid",
+  placeItems: "center",
+  background: "var(--red-bg)",
+  color: "var(--red-fg)",
+  border: "1px solid var(--red-bd)",
+};
+
+const DIALOG_TEXT: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
+
+const DIALOG_TITLE: CSSProperties = {
+  margin: 0,
+  fontSize: 16,
+  fontWeight: 600,
+};
+
+const DIALOG_BODY: CSSProperties = {
+  margin: 0,
+  color: "var(--muted)",
+  fontSize: 13,
+};
+
+const DIALOG_ACTIONS: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+  gap: 8,
+  padding: "20px 22px",
+};
+
+const DIALOG_CANCEL: CSSProperties = {
+  height: 34,
+  padding: "0 14px",
+  borderRadius: 7,
+  border: "1px solid var(--border2)",
+  background: "var(--panel)",
+  color: "var(--fg)",
+  font: "inherit",
+  fontSize: 13,
+  fontWeight: 500,
+  cursor: "pointer",
+};
+
+function confirmStyle(danger: boolean): CSSProperties {
+  return {
+    ...DIALOG_CANCEL,
+    border: 0,
+    background: danger ? "var(--danger)" : "var(--accent)",
+    color: "#FFFFFF",
+  };
+}
+
+function stopButtonStyle(disabled: boolean): CSSProperties {
+  return {
+    ...CONTROL_BUTTON,
+    color: "var(--red-fg)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.45 : 1,
+  };
+}
+
+/** ダイアログの文言 */
+function dialogText(
+  t: Messages,
+  kind: ControlKind,
+): { title: string; body: string; ok: string } {
+  return kind === "restart"
+    ? { title: t.restartTitle, body: t.restartBody, ok: t.restartOk }
+    : { title: t.stopTitle, body: t.stopBody, ok: t.stopOk };
+}
 
 const ROOT: CSSProperties = {
   position: "relative",
@@ -297,6 +465,128 @@ function MenuIcon({ menu }: { menu: Menu }): ReactElement {
   );
 }
 
+function RestartIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+      <path d="M20 4v5h-5" />
+    </svg>
+  );
+}
+
+function StopIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+    >
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+    </svg>
+  );
+}
+
+function CheckIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </svg>
+  );
+}
+
+function WarningIcon(): ReactElement {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 4l9 16H3z" />
+      <path d="M12 10v4" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
+/** 再起動・停止の確認のダイアログ */
+function ControlDialog(props: {
+  t: Messages;
+  kind: ControlKind;
+  onCancel: (() => void) | undefined;
+  onConfirm: (() => void) | undefined;
+}): ReactElement {
+  const { t, kind } = props;
+  const text = dialogText(t, kind);
+  const danger = kind === "stop";
+  return (
+    <div style={OVERLAY}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="control-dialog-title"
+        style={DIALOG}
+      >
+        <div style={DIALOG_HEAD}>
+          {danger && (
+            <span aria-hidden="true" style={DANGER_MARK}>
+              <WarningIcon />
+            </span>
+          )}
+          <div style={DIALOG_TEXT}>
+            <h2 id="control-dialog-title" style={DIALOG_TITLE}>
+              {text.title}
+            </h2>
+            <p style={DIALOG_BODY}>{text.body}</p>
+          </div>
+        </div>
+        <div style={DIALOG_ACTIONS}>
+          <button
+            type="button"
+            onClick={() => props.onCancel?.()}
+            style={DIALOG_CANCEL}
+          >
+            {t.cancel}
+          </button>
+          <button
+            type="button"
+            onClick={() => props.onConfirm?.()}
+            style={confirmStyle(danger)}
+          >
+            {text.ok}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BrandIcon(): ReactElement {
   return (
     <svg
@@ -341,6 +631,9 @@ export function Layout(props: LayoutProps): ReactElement {
   const t = MESSAGES[lang];
   const current = menuOf(path);
   const tone = STATUS_TONE[status];
+  const control = props.control ?? {};
+  // 止めている・止まるのを待っている間は「停止」を押せない（「再起動」は押せる）
+  const stopDisabled = status === "stopped" || status === "stopping";
   const menus: [Menu, string][] = [
     ["dashboard", t.navDashboard],
     ["tasks", t.navTasks],
@@ -403,6 +696,24 @@ export function Layout(props: LayoutProps): ReactElement {
             </span>
           </div>
           <div style={HEADER_RIGHT}>
+            <button
+              type="button"
+              onClick={() => props.onAsk?.("restart")}
+              style={CONTROL_BUTTON}
+            >
+              <RestartIcon />
+              {t.restart}
+            </button>
+            <button
+              type="button"
+              disabled={stopDisabled}
+              onClick={() => props.onAsk?.("stop")}
+              style={stopButtonStyle(stopDisabled)}
+            >
+              <StopIcon />
+              {t.stop}
+            </button>
+            <span aria-hidden="true" style={DIVIDER} />
             <div role="group" aria-label={t.language} style={LANGUAGES}>
               {languages.map(([value, label]) => (
                 <button
@@ -421,6 +732,22 @@ export function Layout(props: LayoutProps): ReactElement {
 
         <main style={MAIN}>{props.children}</main>
       </div>
+
+      {control.toast !== undefined && (
+        <div role="status" style={TOAST}>
+          <CheckIcon />
+          {control.toast === "restart" ? t.toastRestart : t.toastStop}
+        </div>
+      )}
+
+      {control.dialog !== undefined && (
+        <ControlDialog
+          t={t}
+          kind={control.dialog}
+          onCancel={props.onCancel}
+          onConfirm={props.onConfirm}
+        />
+      )}
     </div>
   );
 }

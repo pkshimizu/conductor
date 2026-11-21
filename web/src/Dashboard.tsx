@@ -39,6 +39,7 @@ const NONE = "—";
 const STATUS_TONE: Readonly<Record<DashboardData["status"], string>> = {
   running: "green",
   idle: "blue",
+  stopping: "amber",
   stopped: "red",
 };
 
