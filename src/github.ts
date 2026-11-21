@@ -18,6 +18,13 @@ export interface ProjectIssue {
   labels: string[];
   /** 状態欄の値。未設定なら null */
   column: string | null;
+  /** GitHub の更新日時（ISO 8601）。取れなければ省く */
+  updatedAt?: string;
+}
+
+export interface ListIssuesOptions {
+  /** 閉じた Issue も含める（タスク一覧で Done の Issue も出すため）。既定は開いた Issue だけ */
+  includeClosed?: boolean;
 }
 
 export type CiState = "pending" | "success" | "failure";
@@ -98,8 +105,8 @@ export class GitHub {
 
   // ---- AC1: 列ごとの Issue ----
 
-  /** Projects にある、このリポジトリの開いた Issue（列つき） */
-  async listIssues(): Promise<ProjectIssue[]> {
+  /** Projects にある、このリポジトリの開いた Issue（列つき）。includeClosed なら閉じた Issue も */
+  async listIssues(options: ListIssuesOptions = {}): Promise<ProjectIssue[]> {
     const { projectId } = await this.loadMeta();
     const issues: ProjectIssue[] = [];
     let after: string | null = null;
@@ -115,13 +122,14 @@ export class GitHub {
         const c = item.content;
         if (!c || c.number === undefined) continue; // 下書きや PR
         if (c.repository?.nameWithOwner !== this.repo) continue;
-        if (c.state !== "OPEN") continue;
+        if (c.state !== "OPEN" && !options.includeClosed) continue;
         issues.push({
           number: c.number,
           title: c.title ?? "",
           body: c.body ?? "",
           labels: (c.labels?.nodes ?? []).map((l) => l.name),
           column: item.fieldValueByName?.name ?? null,
+          ...(c.updatedAt === undefined ? {} : { updatedAt: c.updatedAt }),
         });
       }
       if (!items.pageInfo.hasNextPage) break;
@@ -131,9 +139,11 @@ export class GitHub {
   }
 
   /** 列ごとにまとめる */
-  async issuesByColumn(): Promise<Map<string, ProjectIssue[]>> {
+  async issuesByColumn(
+    options: ListIssuesOptions = {},
+  ): Promise<Map<string, ProjectIssue[]>> {
     const map = new Map<string, ProjectIssue[]>();
-    for (const issue of await this.listIssues()) {
+    for (const issue of await this.listIssues(options)) {
       const key = issue.column ?? "";
       map.set(key, [...(map.get(key) ?? []), issue]);
     }
@@ -357,7 +367,7 @@ export class GitHub {
   }
 
   /** PR がマージ済みか。確かめられなければ false */
-  private async isMerged(pr: number): Promise<boolean> {
+  async isMerged(pr: number): Promise<boolean> {
     try {
       const res = await this.rest<{ merged?: boolean }>(
         "GET",
@@ -627,6 +637,7 @@ interface ItemsPage {
           title?: string;
           body?: string;
           state?: string;
+          updatedAt?: string;
           repository?: { nameWithOwner: string };
           labels?: { nodes: { name: string }[] };
         } | null;
@@ -647,7 +658,7 @@ query($id: ID!, $after: String, $field: String!) {
           }
           content {
             ... on Issue {
-              number title body state
+              number title body state updatedAt
               repository { nameWithOwner }
               labels(first: 50) { nodes { name } }
             }

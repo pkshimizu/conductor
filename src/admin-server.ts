@@ -12,6 +12,7 @@ import {
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DashboardData } from "./dashboard-data.js";
+import type { TasksData } from "./tasks-data.js";
 
 /** 稼働状態（動作中・待機中・停止中） */
 export type AdminStatus = "running" | "idle" | "stopped";
@@ -36,6 +37,8 @@ export interface AdminServer {
   setStatus(status: AdminStatus): void;
   /** ダッシュボードの内容を変える。開いている画面に SSE で push する */
   setDashboard(data: DashboardData): void;
+  /** タスク一覧の内容を変える。開いている画面に SSE で push する */
+  setTasks(data: TasksData): void;
   close(): Promise<void>;
 }
 
@@ -109,12 +112,14 @@ export interface AdminInfo {
   project: number;
   /** ダッシュボードの内容（最後に setDashboard したもの）。まだ無ければ省く */
   dashboard?: DashboardData;
+  /** タスク一覧の内容（最後に setTasks したもの）。まだ無ければ省く */
+  tasks?: TasksData;
 }
 
 /** SSE で送る1件（data: に JSON を1行） */
 export function statusEvent(info: AdminInfo): string {
-  const { status, repo, project, dashboard } = info;
-  return `data: ${JSON.stringify({ status, repo, project, dashboard })}\n\n`;
+  const { status, repo, project, dashboard, tasks } = info;
+  return `data: ${JSON.stringify({ status, repo, project, dashboard, tasks })}\n\n`;
 }
 
 async function isFile(file: string): Promise<boolean> {
@@ -155,12 +160,16 @@ export async function startAdminServer(
   const { repo, project } = options;
   let status = options.status;
   let dashboard: DashboardData | undefined;
+  let tasks: TasksData | undefined;
   let port = 0;
   const clients = new Set<ServerResponse>();
-  const info = (): AdminInfo =>
-    dashboard === undefined
-      ? { status, repo, project }
-      : { status, repo, project, dashboard };
+  const info = (): AdminInfo => ({
+    status,
+    repo,
+    project,
+    ...(dashboard === undefined ? {} : { dashboard }),
+    ...(tasks === undefined ? {} : { tasks }),
+  });
   const push = () => {
     const event = statusEvent(info());
     for (const res of clients) res.write(event);
@@ -244,6 +253,10 @@ export async function startAdminServer(
     },
     setDashboard(data: DashboardData) {
       dashboard = data;
+      push();
+    },
+    setTasks(data: TasksData) {
+      tasks = data;
       push();
     },
     close() {
