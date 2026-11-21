@@ -3,6 +3,14 @@
  * 共通の枠（Layout）に渡す。各画面の中身は後の Issue で作る
  */
 import { type ReactElement, useEffect, useState } from "react";
+import {
+  askControl,
+  cancelControl,
+  type ControlState,
+  confirmControl,
+  dismissToast,
+  TOAST_MS,
+} from "./control.js";
 import { Dashboard } from "./Dashboard.js";
 import { type AdminInfo, EVENTS_URL, parseEvent } from "./events.js";
 import { type Lang, MESSAGES } from "./i18n.js";
@@ -90,10 +98,22 @@ export function App(): ReactElement | null {
   // タスク詳細の経過の並び順と、全文を出している経過（Issue の番号ごと）
   const [order, setOrder] = useState<TimelineOrder>("newest");
   const [expanded, setExpanded] = useState<Record<string, number[]>>({});
+  // 再起動・停止の確認のダイアログと知らせ
+  const [control, setControl] = useState<ControlState>({});
 
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
+
+  // 知らせはしばらくしたら消す
+  useEffect(() => {
+    if (control.toast === undefined) return;
+    const timer = window.setTimeout(
+      () => setControl((prev) => dismissToast(prev)),
+      TOAST_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [control.toast]);
 
   if (info === undefined) return null;
   const t = MESSAGES[lang];
@@ -131,6 +151,16 @@ export function App(): ReactElement | null {
       status={info.status}
       onLanguage={changeLanguage}
       onNavigate={navigate}
+      control={control}
+      onAsk={(kind) => setControl((prev) => askControl(prev, kind))}
+      onCancel={() => setControl((prev) => cancelControl(prev))}
+      onConfirm={() => {
+        void confirmControl(
+          control,
+          (p) => fetch(p, { method: "POST" }),
+          setControl,
+        );
+      }}
     >
       {menu === "dashboard" && dashboard !== undefined ? (
         <Dashboard

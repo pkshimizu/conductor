@@ -1,8 +1,8 @@
 /** 画面の言語と文言（デザインの辞書 ja・en のうち、共通の枠で使うもの） */
 export type Lang = "ja" | "en";
 
-/** 稼働状態（動作中・待機中・停止中）。src/admin-server.ts の AdminStatus と同じ */
-export type Status = "running" | "idle" | "stopped";
+/** 稼働状態（動作中・待機中・停止しています・停止中）。src/admin-server.ts の AdminStatus と同じ */
+export type Status = "running" | "idle" | "stopping" | "stopped";
 
 export interface Messages {
   menu: string;
@@ -12,8 +12,20 @@ export interface Messages {
   runsOn: string;
   project: string;
   language: string;
+  restart: string;
+  stop: string;
+  cancel: string;
+  restartTitle: string;
+  restartBody: string;
+  restartOk: string;
+  stopTitle: string;
+  stopBody: string;
+  stopOk: string;
+  toastRestart: string;
+  toastStop: string;
   stRunning: string;
   stIdle: string;
+  stStopping: string;
   stStopped: string;
   blockedTitle: string;
   blockedNote: string;
@@ -92,8 +104,22 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     runsOn: "この PC で動作中（localhost）",
     project: "Project",
     language: "言語",
+    restart: "再起動",
+    stop: "停止",
+    cancel: "キャンセル",
+    restartTitle: "conductor を再起動しますか？",
+    restartBody:
+      "動作中の役はいったん止まります。設定の変更は再起動のあとに反映されます。",
+    restartOk: "再起動する",
+    stopTitle: "conductor を停止しますか？",
+    stopBody:
+      "GitHub の確認と役の実行を止めます。再開するには「再起動」を押してください。",
+    stopOk: "停止する",
+    toastRestart: "再起動しました",
+    toastStop: "停止しました",
     stRunning: "動作中",
     stIdle: "待機中",
+    stStopping: "停止しています",
     stStopped: "停止中",
     blockedTitle: "人の判断を待っています",
     blockedNote: "GitHub で内容を確認して判断してください",
@@ -172,8 +198,22 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     runsOn: "Running on this machine (localhost)",
     project: "Project",
     language: "Language",
+    restart: "Restart",
+    stop: "Stop",
+    cancel: "Cancel",
+    restartTitle: "Restart conductor?",
+    restartBody:
+      "Any running role will be stopped first. Config changes take effect after the restart.",
+    restartOk: "Restart",
+    stopTitle: "Stop conductor?",
+    stopBody:
+      "Polling GitHub and running roles will stop. Press “Restart” to resume.",
+    stopOk: "Stop",
+    toastRestart: "Restarted",
+    toastStop: "Stopped",
     stRunning: "Running",
     stIdle: "Idle",
+    stStopping: "Stopping",
     stStopped: "Stopped",
     blockedTitle: "Waiting for your decision",
     blockedNote: "Review the issue on GitHub and decide how to proceed",
@@ -251,5 +291,6 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
 export function statusLabel(t: Messages, status: Status): string {
   if (status === "running") return t.stRunning;
   if (status === "idle") return t.stIdle;
+  if (status === "stopping") return t.stStopping;
   return t.stStopped;
 }

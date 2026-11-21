@@ -11,6 +11,13 @@ describe("parseEvent", () => {
     });
   });
 
+  it("停止しています（stopping）も稼働状態として読む", () => {
+    const data = '{"status":"stopping","repo":"o/r","project":3}';
+    expect(parseEvent(data)?.status).toBe("stopping");
+    const other = '{"status":"other","repo":"o/r","project":3}';
+    expect(parseEvent(other)).toBeUndefined();
+  });
+
   it("ダッシュボードの内容があれば一緒に読む。形が違えば省く", () => {
     const dashboard = {
       status: "running",

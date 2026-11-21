@@ -3,8 +3,8 @@
  * 画面からも読むので、Node に頼るものを import しない（JSON にできる値だけ）
  */
 
-/** 稼働状態（動作中・待機中・停止中）。src/admin-server.ts の AdminStatus と同じ */
-export type DashboardStatus = "running" | "idle" | "stopped";
+/** 稼働状態（動作中・待機中・停止しています・停止中）。src/admin-server.ts の AdminStatus と同じ */
+export type DashboardStatus = "running" | "idle" | "stopping" | "stopped";
 
 /** 段階（src/store.ts の Stage と同じ） */
 export type DashboardStage =

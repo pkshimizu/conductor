@@ -24,6 +24,9 @@ const BASE: Readonly<Record<Scheme, Readonly<Record<string, string>>>> = {
     accent: "#5652D6",
     accentText: "#4440C4",
     accentSoft: "#EFEEFD",
+    overlay: "rgba(20, 20, 26, 0.38)",
+    shadowLg: "0 18px 48px rgba(20, 20, 26, 0.20)",
+    danger: "#C9252C",
   },
   dark: {
     bg: "#0C0C0F",
@@ -37,6 +40,9 @@ const BASE: Readonly<Record<Scheme, Readonly<Record<string, string>>>> = {
     accent: "#5652D6",
     accentText: "#ABA8FF",
     accentSoft: "#1F1E3B",
+    overlay: "rgba(0, 0, 0, 0.62)",
+    shadowLg: "0 18px 48px rgba(0, 0, 0, 0.55)",
+    danger: "#D2343B",
   },
 };
 
@@ -47,12 +53,14 @@ const TONES: Readonly<Record<Scheme, Readonly<Record<string, Tone>>>> = {
   light: {
     gray: ["#F0F0F3", "#4A4A55", "#DCDCE2"],
     blue: ["#EAF1FF", "#1E4FD0", "#C9D9FB"],
+    amber: ["#FFF4DE", "#8F5300", "#F2D9A6"],
     green: ["#E7F6EC", "#16773A", "#BFE5CC"],
     red: ["#FFECEB", "#BC2229", "#F5C3C0"],
   },
   dark: {
     gray: ["#202026", "#C2C2CC", "#30303A"],
     blue: ["#14213F", "#9BB8FF", "#24375F"],
+    amber: ["#2C210F", "#F2C46E", "#4A3818"],
     green: ["#0F2819", "#74D69C", "#1D4A2E"],
     red: ["#371416", "#FF9C9C", "#5E2326"],
   },

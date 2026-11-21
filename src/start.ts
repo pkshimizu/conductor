@@ -29,11 +29,12 @@ import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
 import { checkProgress } from "./progress.js";
 import type { RespecDeps } from "./respec.js";
-import { type LoopActivity, runLoop, type LoopDeps } from "./loop.js";
+import type { LoopActivity, LoopDeps } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
 import { checkSpecApproval } from "./spec-approval.js";
 import { runSpecifier } from "./specifier.js";
+import { type Supervisor, startSupervisor } from "./supervisor.js";
 import type { RequirementRecord, Store } from "./store.js";
 import { syncMain } from "./sync.js";
 import { loadTaskDetail, type TaskDetailData } from "./task-detail.js";
@@ -394,6 +395,7 @@ export function tasksBoard(
 
 /**
  * 常駐して Issue を進める。同じプロセスから管理画面も配信し、稼働状態を知らせる。
+ * 管理画面から停止・再起動できる（再起動では config.yaml を読み直す）。
  * Ctrl+C を受けたら、今の段階を終えてから止まる
  */
 export async function start(
@@ -402,11 +404,15 @@ export async function start(
   log: (text: string) => void,
 ): Promise<void> {
   const store = new SqliteStore(storeFile(config.github.repo));
-  const controller = new AbortController();
+  let finished!: () => void;
+  const ended = new Promise<void>((done) => (finished = done));
+  let supervisor: Supervisor | undefined;
+  let interrupted = false;
   const onSigint = () => {
-    if (controller.signal.aborted) return;
+    if (interrupted) return;
+    interrupted = true;
     log("Ctrl+C を受けました。今の段階を終えてから止まります");
-    controller.abort();
+    finished();
   };
   process.on("SIGINT", onSigint);
   try {
@@ -415,42 +421,59 @@ export async function start(
       project: config.github.project,
       status: "running",
       log,
+      control: {
+        stop: () => supervisor?.stop() ?? Promise.resolve(),
+        restart: () => supervisor?.restart() ?? Promise.resolve(),
+      },
     });
+    // 再起動のたびに、読み直した設定で作り直す
+    let dashboard: DashboardRefresher | undefined;
+    let tasks: TasksRefresher | undefined;
+    let status: AdminStatus = "running";
     try {
-      const deps = await buildLoopDeps(repoDir, config, store, log);
-      const dashboard = dashboardRefresher(
-        { config, store, board: deps.board },
-        (data) => admin.setDashboard(data),
-        log,
-      );
-      // タスク一覧とタスク詳細は1回の読み直しでまとめて作り、GitHub への問い合わせを共有する
-      const tasks = tasksRefresher(
-        { config, store, board: tasksBoard(githubFromConfig(config)) },
-        {
-          tasks: (data) => admin.setTasks(data),
-          details: (list) => admin.setTaskDetails(list),
-        },
-        log,
-      );
-      await runLoop(
-        {
+      const buildDeps = async (next: Config): Promise<LoopDeps> => {
+        const deps = await buildLoopDeps(repoDir, next, store, log);
+        const d = dashboardRefresher(
+          { config: next, store, board: deps.board },
+          (data) => admin.setDashboard(data),
+          log,
+        );
+        // タスク一覧とタスク詳細は1回の読み直しでまとめて作り、GitHub への問い合わせを共有する
+        const t = tasksRefresher(
+          { config: next, store, board: tasksBoard(githubFromConfig(next)) },
+          {
+            tasks: (data) => admin.setTasks(data),
+            details: (list) => admin.setTaskDetails(list),
+          },
+          log,
+        );
+        dashboard = d;
+        tasks = t;
+        d.update({ status });
+        return {
           ...deps,
-          onStatus: (status) => {
-            admin.setStatus(status);
-            dashboard.update({ status });
-            tasks.update();
-          },
           onActivity: (activity) => {
-            dashboard.update({ activity });
-            tasks.update({ activity });
+            d.update({ activity });
+            t.update({ activity });
           },
+        };
+      };
+      const current = startSupervisor({
+        repoDir,
+        config,
+        buildDeps,
+        onStatus: (next) => {
+          status = next;
+          admin.setStatus(next);
+          dashboard?.update({ status: next });
+          tasks?.update();
         },
-        controller.signal,
-        { intervalMs: config.poll_interval * 1000 },
-      );
-      admin.setStatus("stopped");
-      dashboard.update({ status: "stopped" });
-      await Promise.all([dashboard.idle(), tasks.idle()]);
+        log,
+      });
+      supervisor = current;
+      await ended;
+      await current.shutdown();
+      await Promise.all([dashboard?.idle(), tasks?.idle()]);
     } finally {
       await admin.close();
     }

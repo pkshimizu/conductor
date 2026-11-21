@@ -19,7 +19,12 @@ export interface AdminInfo {
 }
 
 function isStatus(value: unknown): value is Status {
-  return value === "running" || value === "idle" || value === "stopped";
+  return (
+    value === "running" ||
+    value === "idle" ||
+    value === "stopping" ||
+    value === "stopped"
+  );
 }
 
 function isObject(value: unknown): value is object {
