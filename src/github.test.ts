@@ -122,6 +122,42 @@ describe("AC1: 列ごとの Issue", () => {
     expect(byColumn.get("Testing")?.map((i) => i.number)).toEqual([3]);
   });
 
+  it("includeClosed なら閉じた Issue も取り、更新日時を付ける", async () => {
+    const { gh } = fakeGh((_, input) => {
+      const { query: q } = query(input);
+      if (q.includes("projectV2(number")) return ok({ data: META });
+      if (q.includes("items(first")) {
+        expect(q).toContain("updatedAt");
+        return ok({
+          data: {
+            node: {
+              items: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  {
+                    fieldValueByName: { name: "Ready" },
+                    content: issueNode(1, {
+                      updatedAt: "2026-11-20T00:00:00Z",
+                    }),
+                  },
+                  {
+                    fieldValueByName: { name: "Done" },
+                    content: issueNode(4, { state: "CLOSED" }),
+                  },
+                ],
+              },
+            },
+          },
+        });
+      }
+      return undefined;
+    });
+    const byColumn = await gh.issuesByColumn({ includeClosed: true });
+    expect(byColumn.get("Ready")?.[0]?.updatedAt).toBe("2026-11-20T00:00:00Z");
+    expect(byColumn.get("Done")?.map((i) => i.number)).toEqual([4]);
+    expect((await gh.issuesByColumn()).get("Done")).toBeUndefined();
+  });
+
   it("Projects が無ければ分かるエラーにする", async () => {
     const { gh } = fakeGh(() =>
       ok({ data: { user: null }, errors: [{ message: "not found" }] }),

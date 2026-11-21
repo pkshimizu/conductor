@@ -5,8 +5,15 @@ import { DISCORD_TOKEN_ENV, parseConfig } from "./config.js";
 import type { DashboardData } from "./dashboard.js";
 import { DiscordChat } from "./discord.js";
 import type { LoopIssue } from "./loop.js";
-import { chatFromConfig, dashboardRefresher, roleRunner } from "./start.js";
+import {
+  chatFromConfig,
+  dashboardRefresher,
+  roleRunner,
+  tasksBoard,
+  tasksRefresher,
+} from "./start.js";
 import { MemoryStore } from "./store.js";
+import type { TaskIssue, TasksData } from "./tasks.js";
 
 describe("chatFromConfig", () => {
   const chat = {
@@ -78,6 +85,87 @@ describe("dashboardRefresher", () => {
     refresher.update({ status: "running" });
     await refresher.idle();
     expect(logs).toEqual(["ダッシュボードの内容を読めませんでした: 落ちた"]);
+  });
+});
+
+describe("tasksRefresher", () => {
+  const config = parseConfig(
+    [
+      "github: { repo: me/app, project: 3, notify: me }",
+      "protected: [e2e/**]",
+      "commands: { setup: s, test: t, acceptance: a, typecheck: y, build: b }",
+    ].join("\n"),
+  );
+
+  it("読み直しを重ねず、途中で頼まれたらもう1回だけ読み直す", async () => {
+    let reads = 0;
+    let release: () => void = () => {};
+    const board = {
+      issuesByColumn: async () => {
+        reads++;
+        if (reads === 1) await new Promise<void>((r) => (release = r));
+        return new Map<string, TaskIssue[]>([
+          ["Ready", [{ number: reads, title: "t", body: "" }]],
+        ]);
+      },
+      isMerged: () => Promise.resolve(false),
+    };
+    const published: TasksData[] = [];
+    const refresher = tasksRefresher(
+      { config, store: new MemoryStore(), board },
+      (data) => published.push(data),
+      () => {},
+    );
+    refresher.update();
+    refresher.update();
+    refresher.update();
+    release();
+    await refresher.idle();
+    expect(reads).toBe(2);
+    expect(published.map((d) => d.issues[0]?.number)).toEqual([1, 2]);
+  });
+
+  it("読めなくても止まらず、書き残す", async () => {
+    const logs: string[] = [];
+    const refresher = tasksRefresher(
+      {
+        config,
+        store: new MemoryStore(),
+        board: {
+          issuesByColumn: () => Promise.reject(new Error("落ちた")),
+          isMerged: () => Promise.resolve(false),
+        },
+      },
+      () => {},
+      (text) => logs.push(text),
+    );
+    refresher.update();
+    await refresher.idle();
+    expect(logs).toEqual(["タスク一覧の内容を読めませんでした: 落ちた"]);
+  });
+});
+
+describe("tasksBoard", () => {
+  it("閉じた Issue も含めて取り、マージ済みとわかった PR は再び確かめない", async () => {
+    const options: unknown[] = [];
+    const asked: number[] = [];
+    const board = tasksBoard({
+      issuesByColumn: (o) => {
+        options.push(o);
+        return Promise.resolve(new Map());
+      },
+      isMerged: (pr) => {
+        asked.push(pr);
+        return Promise.resolve(pr === 5);
+      },
+    });
+    await board.issuesByColumn();
+    expect(options).toEqual([{ includeClosed: true }]);
+    expect(await board.isMerged(5)).toBe(true);
+    expect(await board.isMerged(5)).toBe(true);
+    expect(await board.isMerged(6)).toBe(false);
+    expect(await board.isMerged(6)).toBe(false);
+    expect(asked).toEqual([5, 6, 6]);
   });
 });
 

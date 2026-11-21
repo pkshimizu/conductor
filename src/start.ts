@@ -24,7 +24,7 @@ import { runDecomposer } from "./decomposer.js";
 import { DiscordChat } from "./discord.js";
 import { shellExec } from "./exec.js";
 import { Git } from "./git.js";
-import { githubFromConfig } from "./github.js";
+import { type GitHub, githubFromConfig } from "./github.js";
 import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
 import { checkProgress } from "./progress.js";
@@ -36,6 +36,12 @@ import { checkSpecApproval } from "./spec-approval.js";
 import { runSpecifier } from "./specifier.js";
 import type { RequirementRecord, Store } from "./store.js";
 import { syncMain } from "./sync.js";
+import {
+  loadTasks,
+  type TasksBoard,
+  type TasksData,
+  type TasksDeps,
+} from "./tasks.js";
 import { runTester } from "./tester.js";
 
 /** 記録の置き場所。対象リポジトリに混ざらないよう、ホームの下に置く */
@@ -266,6 +272,70 @@ export function dashboardRefresher(
   };
 }
 
+export interface TasksRefresher {
+  /** Issue の列や回数が変わったかもしれない。内容を読み直して知らせる */
+  update(): void;
+  /** 読み直しの途中なら、終わるまで待つ */
+  idle(): Promise<void>;
+}
+
+/**
+ * タスク一覧の内容を読み直して publish に渡す。
+ * 読み直しは1つずつ行い、途中で頼まれたら終わってからもう1回だけ読み直す（GitHub に要求を重ねない）。
+ * 読めなくても常駐ループは止めない
+ */
+export function tasksRefresher(
+  deps: TasksDeps,
+  publish: (data: TasksData) => void,
+  log: (text: string) => void,
+): TasksRefresher {
+  let pending = false;
+  let running: Promise<void> | undefined;
+
+  const loop = async () => {
+    while (pending) {
+      pending = false;
+      try {
+        publish(await loadTasks(deps));
+      } catch (e) {
+        log(
+          `タスク一覧の内容を読めませんでした: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    running = undefined;
+  };
+
+  return {
+    update() {
+      pending = true;
+      running ??= loop();
+    },
+    async idle() {
+      await running;
+    },
+  };
+}
+
+/**
+ * タスク一覧に使う GitHub。閉じた Issue（Done など）も含めて取り、
+ * マージ済みとわかった PR は覚えておく（マージ済みは戻らないので、毎回は確かめない）
+ */
+export function tasksBoard(
+  github: Pick<GitHub, "issuesByColumn" | "isMerged">,
+): TasksBoard {
+  const merged = new Set<number>();
+  return {
+    issuesByColumn: () => github.issuesByColumn({ includeClosed: true }),
+    async isMerged(pr) {
+      if (merged.has(pr)) return true;
+      const yes = await github.isMerged(pr);
+      if (yes) merged.add(pr);
+      return yes;
+    },
+  };
+}
+
 /**
  * 常駐して Issue を進める。同じプロセスから管理画面も配信し、稼働状態を知らせる。
  * Ctrl+C を受けたら、今の段階を終えてから止まる
@@ -297,21 +367,30 @@ export async function start(
         (data) => admin.setDashboard(data),
         log,
       );
+      const tasks = tasksRefresher(
+        { config, store, board: tasksBoard(githubFromConfig(config)) },
+        (data) => admin.setTasks(data),
+        log,
+      );
       await runLoop(
         {
           ...deps,
           onStatus: (status) => {
             admin.setStatus(status);
             dashboard.update({ status });
+            tasks.update();
           },
-          onActivity: (activity) => dashboard.update({ activity }),
+          onActivity: (activity) => {
+            dashboard.update({ activity });
+            tasks.update();
+          },
         },
         controller.signal,
         { intervalMs: config.poll_interval * 1000 },
       );
       admin.setStatus("stopped");
       dashboard.update({ status: "stopped" });
-      await dashboard.idle();
+      await Promise.all([dashboard.idle(), tasks.idle()]);
     } finally {
       await admin.close();
     }

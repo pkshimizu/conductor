@@ -27,6 +27,7 @@ import {
   STAGE_KEYS,
   statusLabel,
 } from "./i18n.js";
+import { detailPath, isPlainClick } from "./navigation.js";
 
 export type { DashboardData } from "../../src/dashboard-data.js";
 
@@ -265,21 +266,6 @@ const COUNT_CARD: CSSProperties = {
 
 function issueUrl(repo: string, issue: number): string {
   return `https://github.com/${repo}/issues/${issue}`;
-}
-
-function detailPath(issue: number): string {
-  return `/tasks/${issue}`;
-}
-
-/** 修飾キーなしの左クリックか（それ以外はブラウザに任せ、新しいタブなどで開く） */
-function isPlainClick(event: MouseEvent): boolean {
-  return (
-    event.button === 0 &&
-    !event.metaKey &&
-    !event.ctrlKey &&
-    !event.shiftKey &&
-    !event.altKey
-  );
 }
 
 interface LinkProps {

@@ -41,6 +41,30 @@ describe("parseEvent", () => {
     });
   });
 
+  it("タスク一覧の内容があれば一緒に読む。形が違えば省く", () => {
+    const tasks = {
+      repo: "o/r",
+      columns: ["Ready", "Done"],
+      doneColumn: "Done",
+      limits: { rejections: 3, objections: 2 },
+      issues: [
+        {
+          number: 1,
+          title: "t",
+          column: "Ready",
+          rejections: 0,
+          objections: 0,
+        },
+      ],
+    };
+    const base = { status: "running", repo: "o/r", project: 3 };
+    expect(parseEvent(JSON.stringify({ ...base, tasks }))?.tasks).toEqual(
+      tasks,
+    );
+    const broken = { ...base, tasks: { ...tasks, issues: "none" } };
+    expect(parseEvent(JSON.stringify(broken))).toEqual(base);
+  });
+
   it("形が違えば undefined", () => {
     expect(parseEvent("not json")).toBeUndefined();
     expect(parseEvent("null")).toBeUndefined();

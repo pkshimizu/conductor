@@ -8,7 +8,9 @@ import { type AdminInfo, EVENTS_URL, parseEvent } from "./events.js";
 import { type Lang, MESSAGES } from "./i18n.js";
 import { loadLanguage, saveLanguage } from "./language.js";
 import { Layout } from "./Layout.js";
-import { menuOf } from "./routes.js";
+import { MENU_PATHS, menuOf } from "./routes.js";
+import { TaskList } from "./TaskList.js";
+import { ALL_COLUMNS } from "./task-filter.js";
 import { DARK_QUERY, type Scheme, watchColorScheme } from "./theme.js";
 
 /** 稼働状態などを SSE で受け取る。つながらなくなったら停止中として示す */
@@ -80,6 +82,9 @@ export function App(): ReactElement | null {
   const [path, navigate] = usePath();
   const info = useAdminInfo();
   const now = useNow();
+  // タスク一覧の絞り込み。詳細を開いて戻っても残す
+  const [taskFilter, setTaskFilter] = useState<string>(ALL_COLUMNS);
+  const [taskQuery, setTaskQuery] = useState("");
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -119,6 +124,16 @@ export function App(): ReactElement | null {
           data={dashboard}
           lang={lang}
           now={now}
+          onNavigate={navigate}
+        />
+      ) : path === MENU_PATHS.tasks && info.tasks !== undefined ? (
+        <TaskList
+          data={info.tasks}
+          lang={lang}
+          filter={taskFilter}
+          query={taskQuery}
+          onFilter={setTaskFilter}
+          onQuery={setTaskQuery}
           onNavigate={navigate}
         />
       ) : (

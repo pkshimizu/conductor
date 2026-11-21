@@ -36,6 +36,17 @@ export interface Messages {
   interval: string;
   mergeMode: string;
   countsTitle: string;
+  all: string;
+  searchPh: string;
+  colIssue: string;
+  colTitle: string;
+  colColumn: string;
+  colStage: string;
+  colRej: string;
+  colObj: string;
+  colUpdated: string;
+  noResults: string;
+  merged: string;
   /** 進み具合の段階 */
   stage: Readonly<Record<StageKey, string>>;
   /** 動いている役 */
@@ -91,6 +102,17 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     interval: "確認の間隔",
     mergeMode: "マージ",
     countsTitle: "列ごとの件数",
+    all: "すべて",
+    searchPh: "番号・タイトルで検索",
+    colIssue: "Issue",
+    colTitle: "タイトル",
+    colColumn: "列",
+    colStage: "途中の段階",
+    colRej: "差し戻し",
+    colObj: "異議",
+    colUpdated: "更新日時",
+    noResults: "該当する Issue はありません",
+    merged: "マージ済み",
     stage: {
       test: "テスト",
       impl: "実装",
@@ -142,6 +164,17 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     interval: "Poll interval",
     mergeMode: "Merge",
     countsTitle: "Issues by column",
+    all: "All",
+    searchPh: "Search by number or title",
+    colIssue: "Issue",
+    colTitle: "Title",
+    colColumn: "Column",
+    colStage: "Current stage",
+    colRej: "Rejections",
+    colObj: "Objections",
+    colUpdated: "Updated",
+    noResults: "No matching issues",
+    merged: "Merged",
     stage: {
       test: "Test",
       impl: "Implement",
