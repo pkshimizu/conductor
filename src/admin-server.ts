@@ -42,6 +42,11 @@ export interface AdminServer {
   setTasks(data: TasksData): void;
   /** タスク詳細の内容を変える（Issue の番号ごとに最後のものを覚える）。開いている画面に SSE で push する */
   setTaskDetail(data: TaskDetailData): void;
+  /**
+   * すべての Issue のタスク詳細をまとめて入れ替える（list に無い Issue は除く）。
+   * 開いている画面には1度だけ SSE で push する
+   */
+  setTaskDetails(list: readonly TaskDetailData[]): void;
   close(): Promise<void>;
 }
 
@@ -274,6 +279,11 @@ export async function startAdminServer(
     },
     setTaskDetail(data: TaskDetailData) {
       details.set(data.number, data);
+      push();
+    },
+    setTaskDetails(list: readonly TaskDetailData[]) {
+      details.clear();
+      for (const data of list) details.set(data.number, data);
       push();
     },
     close() {

@@ -267,6 +267,46 @@ describe("startAdminServer", () => {
     expect((await after.read()).value).toBe(want);
   });
 
+  it("setTaskDetails は全件を入れ替えて1度だけ push し、list に無い Issue は除く", async () => {
+    const server = await serve(INDEX);
+    const detail = (number: number, title: string): TaskDetailData => ({
+      number,
+      title,
+      column: "Ready",
+      repo: "o/r",
+      columns: ["Ready"],
+      rejections: 0,
+      objections: 0,
+      limits: { rejections: 3, objections: 2 },
+      timeline: [],
+    });
+    const controller = new AbortController();
+    cleanups.push(async () => controller.abort());
+    const res = await fetch(new URL("/api/events", server.url), {
+      signal: controller.signal,
+    });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    expect((await reader.read()).value).toBe(statusEvent(INFO));
+    server.setTaskDetails([detail(1, "a"), detail(2, "b")]);
+    server.setTaskDetails([detail(2, "c")]);
+    server.setStatus("stopped");
+    let text = "";
+    const end = statusEvent({
+      ...INFO,
+      status: "stopped",
+      details: { "2": detail(2, "c") },
+    });
+    while (!text.endsWith(end)) text += (await reader.read()).value ?? "";
+    expect(text).toBe(
+      statusEvent({
+        ...INFO,
+        details: { "1": detail(1, "a"), "2": detail(2, "b") },
+      }) +
+        statusEvent({ ...INFO, details: { "2": detail(2, "c") } }) +
+        end,
+    );
+  });
+
   it("閉じたあとは接続できない。2回閉じてもよい", async () => {
     const server = await serve(INDEX);
     await server.close();
