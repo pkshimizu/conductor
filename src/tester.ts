@@ -11,6 +11,10 @@ import type { Shell } from "./exec.js";
 import type { Git } from "./git.js";
 import { matchesAny } from "./git.js";
 import { listAcceptance } from "./intake.js";
+import {
+  permissionDenials,
+  recordPermissionRequest,
+} from "./permission-request.js";
 import { pendingObjection } from "./rejection.js";
 import type { IssueKey, Store } from "./store.js";
 
@@ -95,6 +99,8 @@ export type TesterResult =
   | { status: "committed"; branch: string; commit: string; hash: string }
   | { status: "objection"; questions: string[]; objections: number }
   | { status: "waiting" }
+  /** 許可リストにない操作を拒否されたので、許可を待つ（rules は足す規則の案） */
+  | { status: "waiting_permission"; rules: string[] }
   | { status: "failed"; problems: string[] };
 
 /** テスト用ブランチの名前 */
@@ -117,6 +123,11 @@ export function testerAllow(config: Config): string[] {
     ...config.protected.map((g) => `Edit(./${g})`),
     ...config.roles.tester.allow,
   ];
+}
+
+/** テスト役の拒否リスト（いまは無い。claude には渡さない） */
+export function testerDeny(): string[] {
+  return [];
 }
 
 export function testerPrompt(
@@ -278,6 +289,11 @@ export async function runTester(
 
   const record = await store.get(key);
   if (record && record.objections > limit) return { status: "waiting" };
+  // 許可の確認を待つ間は役を起動しない
+  const permission = await store.getPermissionRequest(key);
+  if (permission !== undefined) {
+    return { status: "waiting_permission", rules: permission.rules };
+  }
 
   // 実装役の異議で戻ってきたときは、その指摘を最初から渡す
   const objection = await pendingObjection(store, key);
@@ -305,6 +321,8 @@ export async function runTester(
     const changed = await git.changedFiles();
     const written = changed.filter((f) => matchesAny(f, config.protected));
     await git.discard(changed.filter((f) => !written.includes(f)));
+    // 許可リストにない操作を拒否されたら（deny に当てはまるものは除く）、失敗にせず許可を確かめる
+    const asked = permissionDenials(result.denials, testerDeny(), deps.repoDir);
 
     if (out.verdict === "objection") {
       await git.discardAll();
@@ -335,6 +353,17 @@ export async function runTester(
         ].join("\n"),
       });
       return { status: "objection", questions, objections };
+    }
+
+    if (asked.rules.length > 0) {
+      // 許可を足したら書き直すので、途中のテストは捨てる（失敗としては数えない）
+      await git.discardAll();
+      await recordPermissionRequest(store, key, {
+        role: "tester",
+        title: issue.title,
+        ...asked,
+      });
+      return { status: "waiting_permission", rules: asked.rules };
     }
 
     // 整形してから保護する。実装役が後で整形しても、保護対象が変わらないように

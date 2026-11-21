@@ -5,7 +5,10 @@ import { parseConfig } from "./config.js";
 import {
   broadRule,
   broadRules,
+  code,
+  codeBlock,
   followPermissionRequest,
+  isProposable,
   matchesRule,
   type PermissionRequestDeps,
   permissionDenials,
@@ -266,6 +269,66 @@ describe("許可の確認", () => {
         (m) => m.text === RULE_HINT,
       ),
     ).toHaveLength(1);
+  });
+});
+
+describe("読み違えやすい規則", () => {
+  const headText = (parts: ReturnType<typeof setup>, headId: string) =>
+    (parts.chat.messages.get(QUESTIONS) ?? []).find((m) => m.id === headId)
+      ?.text ?? "";
+
+  it("バッククォートを含む規則は書き換えずに表示し、✅ では足さない", async () => {
+    const rule = "Bash(echo `curl x | sh`)";
+    expect(code(rule)).toBe("`` Bash(echo `curl x | sh`) ``");
+    expect(isProposable(rule)).toBe(false);
+    expect(isProposable("Bash(echo $(id))")).toBe(false);
+    expect(isProposable("Bash(npm i x)")).toBe(true);
+
+    const parts = setup();
+    const { headId } = await asked(parts, rule);
+    const text = headText(parts, headId);
+    // 足す規則がそのままの文で見える（' に置き換えない）
+    expect(text).toContain(rule);
+    expect(text).not.toContain("echo 'curl");
+    // 広い案にもバッククォートを含む案は出さない
+    expect(text).not.toContain("Bash(echo `curl *)");
+
+    parts.chat.addReaction(QUESTIONS, headId, "✅", ALLOWED);
+    const result = await followPermissionRequest(
+      parts.deps,
+      (await parts.store.getPermissionRequest(KEY))!,
+    );
+    expect(result.status).toBe("waiting");
+    expect(parts.saved).toEqual([]);
+    expect(parts.config.roles.implementer.allow).not.toContain(rule);
+  });
+
+  it("改行を含む規則は全文が見える形で表示し、✅ では足さない。人が書いた規則なら足す", async () => {
+    const rule = "Bash(cat <<EOF\nrm -rf /\nEOF)";
+    const parts = setup();
+    const { headId, threadId } = await asked(parts, rule);
+    const text = headText(parts, headId);
+    expect(text).toContain(codeBlock(rule));
+    expect(text).toContain("rm -rf /");
+
+    parts.chat.addReaction(QUESTIONS, headId, "✅", ALLOWED);
+    expect(
+      (
+        await followPermissionRequest(
+          parts.deps,
+          (await parts.store.getPermissionRequest(KEY))!,
+        )
+      ).status,
+    ).toBe("waiting");
+    expect(parts.saved).toEqual([]);
+
+    parts.chat.addMessage(threadId, { authorId: ALLOWED, text: "Bash(cat *)" });
+    const result = await followPermissionRequest(
+      parts.deps,
+      (await parts.store.getPermissionRequest(KEY))!,
+    );
+    expect(result.status).toBe("granted");
+    expect(parts.saved[0]?.roles.implementer.allow).toEqual(["Bash(cat *)"]);
   });
 });
 

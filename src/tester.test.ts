@@ -469,4 +469,34 @@ describe("runTester", () => {
       "Issue に無い AC9 のテストがあります",
     );
   });
+
+  it("許可リストにない操作を拒否されたら、失敗にせず許可を待つ。記録がある間は起動しない", async () => {
+    const s = setup([
+      { output: approve([TESTS[0]!]), write: { "e2e/cards.spec.ts": SPEC } },
+    ]);
+    const run = s.deps.run;
+    s.deps.run = async (r) => ({
+      ...(await run(r)),
+      denials: [{ tool: "Bash", input: { command: "npx playwright install" } }],
+    });
+    const r = await runTester(s.deps, ISSUE);
+    expect(r).toEqual({
+      status: "waiting_permission",
+      rules: ["Bash(npx playwright install)"],
+    });
+    expect(s.runs).toHaveLength(1);
+    expect(s.g.committed.size).toBe(0);
+    expect(s.b.moves).toEqual([]);
+    expect(
+      await s.store.getPermissionRequest({ repo: "me/app", issue: 2 }),
+    ).toMatchObject({
+      role: "tester",
+      rules: ["Bash(npx playwright install)"],
+      title: ISSUE.title,
+    });
+
+    const again = await runTester(s.deps, ISSUE);
+    expect(again.status).toBe("waiting_permission");
+    expect(s.runs).toHaveLength(1);
+  });
 });

@@ -197,7 +197,13 @@ export function broadRules(rules: readonly string[]): string[] {
   const out: string[] = [];
   for (const r of rules) {
     const b = broadRule(r);
-    if (b !== undefined && !rules.includes(b) && !out.includes(b)) out.push(b);
+    if (
+      b !== undefined &&
+      isProposable(b) &&
+      !rules.includes(b) &&
+      !out.includes(b)
+    )
+      out.push(b);
   }
   return out;
 }
@@ -210,7 +216,45 @@ export function permissionThreadName(issue: number, title: string): string {
     : name;
 }
 
-const code = (s: string) => `\`${s.replaceAll("`", "'")}\``;
+/** 文の中で最も長いバッククォートの連なりの長さ */
+function longestBackticks(s: string): number {
+  return Math.max(0, ...(s.match(/`+/g) ?? []).map((m) => m.length));
+}
+
+/**
+ * インラインのコードとして、文を書き換えずに表示する。
+ * バッククォートを含むときは、最も長い連なりより長いフェンスで囲む（Markdown の決まり）
+ */
+export function code(s: string): string {
+  const n = longestBackticks(s);
+  if (n === 0) return `\`${s}\``;
+  const fence = "`".repeat(n + 1);
+  return `${fence} ${s} ${fence}`;
+}
+
+/** 複数行でも、文を書き換えずにコードのブロックとして表示する */
+export function codeBlock(s: string): string {
+  const fence = "`".repeat(Math.max(3, longestBackticks(s) + 1));
+  return `${fence}\n${s}\n${fence}`;
+}
+
+/**
+ * ✅ で足す案にしてよい規則か。
+ * バッククォート・改行・`$(` を含む規則は、表示で読み違えやすく、コマンドの置換も含みうるので、✅ の案にしない
+ * （人がスレッドに規則を書いたときだけ足す）
+ */
+export function isProposable(rule: string): boolean {
+  return !/[`\r\n]|\$\(/.test(rule);
+}
+
+/** 規則の案の一覧の行。✅ の案にしない規則は、そのまま見える形（コードのブロック）で示す */
+function ruleLines(rules: readonly string[]): string[] {
+  return rules.map((r) =>
+    isProposable(r)
+      ? `- ${code(r)}`
+      : `- 次の規則（バッククォート・改行・\`$(\` を含むため、${ALLOW_MARK} では足しません）:\n${codeBlock(r)}`,
+  );
+}
 
 /** 最初の書き込みの文 */
 export function permissionLead(role: string): string {
@@ -238,8 +282,14 @@ export function permissionMessage(input: {
     ...record.denied.map((d) => `- ${code(d)}`),
     "",
     `足す規則の案（${ALLOW_MARK} でこれを足します）:`,
-    ...record.rules.map((r) => `- ${code(r)}`),
+    ...ruleLines(record.rules),
   ];
+  if (!record.rules.some(isProposable)) {
+    lines.push(
+      "",
+      `${ALLOW_MARK} で足せる案はありません。足すときは、規則をこのスレッドに書いてください。`,
+    );
+  }
   if (broad.length > 0) {
     lines.push(
       "",
@@ -283,7 +333,11 @@ export function noChatComment(
     ...record.denied.map((d) => `- ${code(d)}`),
     "",
     `許可するときは、\`.conductor/config.yaml\` の \`roles.${record.role}.allow\` に次の規則を足してください:`,
-    ...record.rules.map((r) => `- ${code(r)}`),
+    ...record.rules.map((r) =>
+      isProposable(r)
+        ? `- ${code(r)}`
+        : `- 次の規則（バッククォート・改行・\`$(\` を含みます。中身をよく確かめてください）:\n${codeBlock(r)}`,
+    ),
     ...(broad.length > 0
       ? ["", "広く許可するときの案:", ...broad.map((r) => `- ${code(r)}`)]
       : []),
@@ -471,8 +525,10 @@ export async function followPermissionRequest(
   }
   if (last !== undefined) await store.setReadPosition(threadId, last.id);
 
-  if (hasMark(reactions, ALLOW_MARK, allowed)) {
-    const granted = [...record.rules];
+  // ✅ で足すのは、表示どおりに読める案だけ（読み違えやすい規則は人が書いたときだけ足す）
+  const proposable = record.rules.filter(isProposable);
+  if (hasMark(reactions, ALLOW_MARK, allowed) && proposable.length > 0) {
+    const granted = proposable;
     record = await store.setPermissionRequest(key, {
       ...inputOf(record),
       granted,
