@@ -8,7 +8,7 @@ github:
   # 状態欄（Status）の名前は既定どおり
   # Ready / Testing / Implementing / Reviewing / Done / Blocked
 
-# 実装役が変えてはいけないファイル（テスト役だけが書く）
+  # 実装役が変えてはいけないファイル（テスト役だけが書く）
 protected:
   - src/acceptance/**
 
@@ -31,3 +31,11 @@ roles:
       - Bash(npm run lint *)
       - Bash(npm run format)
       - Bash(npm run format:check)
+chat:
+  type: discord
+  channels:
+    requirements: "1572934591293956106"
+    questions: "1572934611028287528"
+    notices: "1572940105943879750"
+  allowed_users:
+    - kenji_shimizu_jiangshi5803
