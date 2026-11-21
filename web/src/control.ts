@@ -10,6 +10,8 @@ export interface ControlState {
   dialog?: ControlKind;
   /** 出している知らせ（再起動しました・停止しました） */
   toast?: ControlKind;
+  /** 頼んだのに失敗した操作（POST が届かない・ok でない）。画面での知らせはまだ出さない */
+  failed?: ControlKind;
 }
 
 /** 頼む先（src/admin-server.ts の POST /api/restart・/api/stop） */
@@ -45,7 +47,8 @@ export function dismissToast(state: ControlState): ControlState {
 
 /**
  * ダイアログの確認のボタン（再起動する・停止する）。ダイアログを閉じて update を呼び、
- * post(CONTROL_PATHS[kind]) で頼み、ok なら toast: kind にして update を呼ぶ。最後の状態を返す。
+ * post(CONTROL_PATHS[kind]) で頼み、ok なら toast: kind、失敗なら failed: kind にして update を呼ぶ。
+ * 最後の状態を返す。
  * 画面は post に (path) => fetch(path, { method: "POST" }) を渡す
  */
 export async function confirmControl(
@@ -63,7 +66,11 @@ export async function confirmControl(
   } catch {
     ok = false;
   }
-  if (!ok) return closed;
+  if (!ok) {
+    const failed: ControlState = { failed: kind };
+    update(failed);
+    return failed;
+  }
   const done: ControlState = { toast: kind };
   update(done);
   return done;

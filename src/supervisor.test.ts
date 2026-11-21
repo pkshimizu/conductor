@@ -153,6 +153,36 @@ describe("startSupervisor", () => {
     await s.shutdown();
   });
 
+  it("再起動で部品を作れなければ、失敗を返して停止中にし、「再起動しました」とは書かない", async () => {
+    const w = world();
+    const logs: string[] = [];
+    const first = w.waitSleep();
+    let builds = 0;
+    const s = startSupervisor({
+      repoDir: "repo",
+      config: config(30),
+      buildDeps: (c) => {
+        builds += 1;
+        if (builds === 1) return w.buildDeps(c);
+        return Promise.reject(new Error("役の指示ファイルがありません"));
+      },
+      onStatus: () => {},
+      log: (t) => logs.push(t),
+      loadConfig: () => Promise.resolve(config(45)),
+    });
+    await first;
+    await expect(s.restart()).rejects.toThrow("役の指示ファイルがありません");
+    expect(s.status()).toBe("stopped");
+    expect(logs).not.toContain("再起動しました");
+    expect(logs.some((l) => l.includes("役の指示ファイルがありません"))).toBe(
+      true,
+    );
+    // 直したあとの再起動・停止はふつうに動く
+    await s.stop();
+    expect(s.status()).toBe("stopped");
+    await s.shutdown();
+  });
+
   it("終えたあとは再起動しない", async () => {
     const w = world();
     const first = w.waitSleep();

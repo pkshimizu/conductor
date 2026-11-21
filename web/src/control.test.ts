@@ -45,21 +45,26 @@ describe("confirmControl", () => {
     expect(final).toEqual({ toast: "stop" });
   });
 
-  it("失敗したら知らせを出さない", async () => {
+  it("失敗したら成功の知らせを出さず、失敗したことを返す", async () => {
     const updates: ControlState[] = [];
     const ng = await confirmControl(
       { dialog: "restart" },
       () => Promise.resolve({ ok: false }),
       (s) => updates.push(s),
     );
-    expect(ng).toEqual({});
+    expect(ng).toEqual({ failed: "restart" });
     const thrown = await confirmControl(
-      { dialog: "restart" },
+      { dialog: "stop" },
       () => Promise.reject(new Error("つながらない")),
       (s) => updates.push(s),
     );
-    expect(thrown).toEqual({});
-    expect(updates).toEqual([{}, {}]);
+    expect(thrown).toEqual({ failed: "stop" });
+    expect(updates).toEqual([
+      {},
+      { failed: "restart" },
+      {},
+      { failed: "stop" },
+    ]);
   });
 
   it("ダイアログが無ければ何もしない", async () => {

@@ -56,14 +56,21 @@ export function startSupervisor(options: SupervisorOptions): Supervisor {
     options.onStatus(next);
   };
 
-  const run = (config: Config): void => {
+  /**
+   * 部品を作ってから常駐ループを回し始める。
+   * 返す Promise は部品ができたら resolve し、作れなければ reject する（常駐ループの終わりは待たない）
+   */
+  const run = (config: Config): Promise<void> => {
     const controller = new AbortController();
     const { signal } = controller;
     const self: Run = { controller, done: Promise.resolve() };
     current = self;
+    // 部品を作る段階（同期の throw も reject として扱う）
+    const built = Promise.resolve().then(() => options.buildDeps(config));
+    // 常駐ループを回す段階
     self.done = (async () => {
       try {
-        const deps = await options.buildDeps(config);
+        const deps = await built;
         if (signal.aborted) return;
         await runLoop(
           {
@@ -84,6 +91,7 @@ export function startSupervisor(options: SupervisorOptions): Supervisor {
         setStatus("stopped");
       }
     })();
+    return built.then(() => {});
   };
 
   /** 動いていれば今の段階を終えてから止める */
@@ -102,7 +110,8 @@ export function startSupervisor(options: SupervisorOptions): Supervisor {
     return next;
   };
 
-  run(options.config);
+  // 起動のときの失敗は self.done の中でログに書き、停止中にする
+  run(options.config).catch(() => {});
 
   return {
     status: () => status,
@@ -126,7 +135,13 @@ export function startSupervisor(options: SupervisorOptions): Supervisor {
           throw e;
         }
         setStatus("running");
-        run(config);
+        try {
+          await run(config);
+        } catch (e) {
+          setStatus("stopped");
+          options.log(`再起動できませんでした: ${errorMessage(e)}`);
+          throw e;
+        }
         options.log("再起動しました");
       }),
     shutdown: () =>
