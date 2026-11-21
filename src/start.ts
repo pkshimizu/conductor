@@ -11,6 +11,7 @@ import {
 } from "./admin-server.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import { mergeApproved } from "./approval.js";
+import { loadBaseSettings } from "./base-settings.js";
 import { type ClaudeDeps, realDeps, runRole, withLanguage } from "./claude.js";
 import type { Chat } from "./chat.js";
 import {
@@ -225,6 +226,8 @@ export async function buildLoopDeps(
             { repoDir, github, base: await github.baseBranch() },
             form,
           ),
+        latestSettings: async () =>
+          loadBaseSettings({ repoDir, base: await github.baseBranch() }),
         log,
       }),
     pickUp: (issue, cache) =>

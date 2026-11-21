@@ -433,6 +433,11 @@ export interface PermissionRequestDeps {
   board: PermissionRequestBoard;
   /** 設定の保存（src/settings.ts の saveSettings。PR を作るだけ） */
   saveSettings(form: SettingsForm): Promise<{ number: number; url: string }>;
+  /**
+   * 最新の設定（origin の base にある config.yaml）のフォームの値を読む（src/settings.ts の loadBaseSettings）。
+   * 省略したら、指揮役が起動したときに読んだ config から作る
+   */
+  latestSettings?(): Promise<SettingsForm>;
   log(text: string): void;
 }
 
@@ -606,19 +611,27 @@ async function grant(
   }
   const allow = config.roles[role].allow;
   let pr = record.pr;
-  const missing = granted.filter((r) => !allow.includes(r));
-  if (pr === undefined && missing.length > 0) {
-    const form = formOf(config);
-    form.roles[role].allow = [...form.roles[role].allow, ...missing];
-    const saved = await deps.saveSettings(form);
-    pr = saved.number;
-    // PR を作ったことをすぐ記録する（マージで失敗しても、次の確認で作り直さない）
-    await store.setPermissionRequest(key, { ...inputOf(record), pr });
-    deps.log(`${name}: 許可リストに規則を足す PR #${pr} を作りました`);
+  if (pr === undefined) {
+    // 最新の設定（origin の base の config.yaml）から作る。起動したあとの main の変更を戻さない
+    const form =
+      deps.latestSettings === undefined
+        ? formOf(config)
+        : await deps.latestSettings();
+    const current = form.roles[role].allow;
+    const missing = granted.filter((r) => !current.includes(r));
+    // 足す規則がもう base にあれば、PR を作らずに再開する
+    if (missing.length > 0) {
+      form.roles[role].allow = [...current, ...missing];
+      const saved = await deps.saveSettings(form);
+      pr = saved.number;
+      // PR を作ったことをすぐ記録する（マージで失敗しても、次の確認で作り直さない）
+      await store.setPermissionRequest(key, { ...inputOf(record), pr });
+      deps.log(`${name}: 許可リストに規則を足す PR #${pr} を作りました`);
+    }
   }
   if (pr !== undefined) await board.mergePullRequest(pr);
   // 動いている指揮役の設定にも足す（次の役の起動から使う。再起動では config.yaml を読み直す）
-  for (const r of missing) if (!allow.includes(r)) allow.push(r);
+  for (const r of granted) if (!allow.includes(r)) allow.push(r);
 
   if (record.threadId !== undefined) {
     await chat.post(record.threadId, grantedMessage(granted, pr, record.issue));

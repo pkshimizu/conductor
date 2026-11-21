@@ -18,6 +18,7 @@ import {
   rulesInText,
 } from "./permission-request.js";
 import type { SettingsForm } from "./settings-data.js";
+import { formOf } from "./settings-rules.js";
 import { MemoryStore } from "./store.js";
 
 const REPO = "o/r";
@@ -262,6 +263,59 @@ describe("許可の確認", () => {
     expect(parts.merged).toEqual([]);
     expect(parts.chat.threads.get(threadId)?.archived).toBe(true);
     expect(await parts.store.getPermissionRequest(KEY)).toBeUndefined();
+  });
+
+  it("足す PR は、起動時の設定ではなく最新の設定（base の config.yaml）から作る", async () => {
+    const parts = setup();
+    // 起動したあとに main で設定が変わった（notify と、別の allow の規則）
+    const latest = formOf(parts.config);
+    latest.github.notify = "someone-else";
+    latest.roles.implementer.allow = [
+      ...latest.roles.implementer.allow,
+      "Bash(ls *)",
+    ];
+    parts.deps.latestSettings = () => Promise.resolve(structuredClone(latest));
+    const { headId } = await asked(parts);
+    parts.chat.addReaction(QUESTIONS, headId, "✅", ALLOWED);
+
+    const result = await followPermissionRequest(
+      parts.deps,
+      (await parts.store.getPermissionRequest(KEY))!,
+    );
+    expect(result.status).toBe("granted");
+    expect(parts.saved).toHaveLength(1);
+    const form = parts.saved[0]!;
+    // main での変更を戻さない
+    expect(form.github.notify).toBe("someone-else");
+    expect(form.roles.implementer.allow).toEqual([
+      ...latest.roles.implementer.allow,
+      "Bash(npm i x)",
+    ]);
+    expect(parts.merged).toEqual([51]);
+  });
+
+  it("足す規則がもう base の config.yaml にあれば、PR を作らずに再開する", async () => {
+    const parts = setup();
+    const latest = formOf(parts.config);
+    latest.roles.implementer.allow = [
+      ...latest.roles.implementer.allow,
+      "Bash(npm i x)",
+    ];
+    parts.deps.latestSettings = () => Promise.resolve(structuredClone(latest));
+    const { headId, threadId } = await asked(parts);
+    parts.chat.addReaction(QUESTIONS, headId, "✅", ALLOWED);
+
+    const result = await followPermissionRequest(
+      parts.deps,
+      (await parts.store.getPermissionRequest(KEY))!,
+    );
+    expect(result.status).toBe("granted");
+    expect(parts.saved).toEqual([]);
+    expect(parts.merged).toEqual([]);
+    expect(parts.chat.threads.get(threadId)?.archived).toBe(true);
+    expect(await parts.store.getPermissionRequest(KEY)).toBeUndefined();
+    // 動いている設定にも足す
+    expect(parts.config.roles.implementer.allow).toContain("Bash(npm i x)");
   });
 
   it("規則の形でない書き込みには案内を返して待つ", async () => {
