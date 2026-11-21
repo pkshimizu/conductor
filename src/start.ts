@@ -4,7 +4,12 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type AdminStatus, startAdminServer } from "./admin-server.js";
+import {
+  type AdminSettings,
+  type AdminStatus,
+  startAdminServer,
+} from "./admin-server.js";
+import { loadSettings, saveSettings } from "./settings.js";
 import { mergeApproved } from "./approval.js";
 import { type ClaudeDeps, realDeps, runRole, withLanguage } from "./claude.js";
 import type { Chat } from "./chat.js";
@@ -406,6 +411,21 @@ export function tasksBoard(
 }
 
 /**
+ * 管理画面の設定の読み書き。保存は対象リポジトリの既定のブランチに向けた PR にする
+ * （リポジトリは管理画面から変えられないので、起動したときの GitHub を使い続ける）
+ */
+export function settingsAccess(
+  repoDir: string,
+  github: Pick<GitHub, "createPullRequest" | "baseBranch">,
+): AdminSettings {
+  return {
+    load: () => loadSettings(repoDir),
+    save: async (form) =>
+      saveSettings({ repoDir, github, base: await github.baseBranch() }, form),
+  };
+}
+
+/**
  * 常駐して Issue を進める。同じプロセスから管理画面も配信し、稼働状態を知らせる。
  * 管理画面から停止・再起動できる（再起動では config.yaml を読み直す）。
  * Ctrl+C を受けたら、今の段階を終えてから止まる
@@ -440,6 +460,7 @@ export async function start(
           supervisor?.abort(issue) ??
           Promise.reject(new Error("まだ起動していません")),
       },
+      settings: settingsAccess(repoDir, githubFromConfig(config)),
     });
     // 再起動のたびに、読み直した設定で作り直す
     let dashboard: DashboardRefresher | undefined;

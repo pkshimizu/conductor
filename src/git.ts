@@ -51,8 +51,12 @@ export class Git {
     private readonly exec: Exec = commandExec("git"),
   ) {}
 
-  async run(args: string[]): Promise<string> {
-    const res = await this.exec(args, { cwd: this.cwd });
+  /** git を実行して標準出力を返す。input は標準入力に渡す */
+  async run(args: string[], input?: string): Promise<string> {
+    const res = await this.exec(args, {
+      cwd: this.cwd,
+      ...(input === undefined ? {} : { input }),
+    });
     if (res.code !== 0) {
       throw new GitError(args, (res.stderr || res.stdout).trim());
     }

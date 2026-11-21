@@ -12,6 +12,8 @@ import {
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DashboardData } from "./dashboard-data.js";
+import type { SettingsData, SettingsForm } from "./settings-data.js";
+import { isSettingsForm } from "./settings-rules.js";
 import type { TaskDetailData } from "./task-detail-data.js";
 import type { TasksData } from "./tasks-data.js";
 
@@ -44,6 +46,49 @@ export interface AdminServerOptions {
   assetsDir?: string;
   /** 停止と再起動（start.ts が Supervisor をつなぐ） */
   control?: AdminControl;
+  /** 設定の読み書き（start.ts が src/settings.ts をつなぐ） */
+  settings?: AdminSettings;
+}
+
+/** 設定の読み書き（GET・POST /api/settings） */
+export interface AdminSettings {
+  load(): Promise<SettingsData>;
+  /** 新しいブランチにコミットして PR を作る */
+  save(form: SettingsForm): Promise<{ number: number; url: string }>;
+}
+
+/** 設定の URL */
+export const SETTINGS_ROUTE = "/api/settings";
+
+/** POST /api/settings の本文の上限 */
+const MAX_BODY = 1024 * 1024;
+
+/** 本文を読む。上限を超えたら undefined */
+async function readBody(req: IncomingMessage): Promise<string | undefined> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    size += b.length;
+    if (size > MAX_BODY) return undefined;
+    chunks.push(b);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** POST /api/settings の本文（{ "form": SettingsForm }）の form。形が違えば undefined */
+export function settingsFormOf(body: string): SettingsForm | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || !("form" in value)) {
+    return undefined;
+  }
+  const form: unknown = value.form;
+  return isSettingsForm(form) ? form : undefined;
 }
 
 export interface AdminServer {
@@ -180,6 +225,14 @@ function sendText(res: ServerResponse, code: number, text: string): void {
   res.end(text);
 }
 
+function sendJson(res: ServerResponse, code: number, value: unknown): void {
+  res.writeHead(code, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(JSON.stringify(value));
+}
+
 async function sendFile(
   req: IncomingMessage,
   res: ServerResponse,
@@ -284,12 +337,69 @@ export async function startAdminServer(
     res.end();
   };
 
+  /** GET /api/settings（読む）・POST /api/settings（保存して PR を作る） */
+  const handleSettings = async (req: IncomingMessage, res: ServerResponse) => {
+    const { settings } = options;
+    if (req.method === "GET") {
+      if (settings === undefined) {
+        sendText(res, 404, "Not Found");
+        return;
+      }
+      let data: SettingsData;
+      try {
+        data = await settings.load();
+      } catch (e) {
+        options.log(
+          `設定を読めませんでした: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        sendText(res, 500, "Internal Server Error");
+        return;
+      }
+      sendJson(res, 200, data);
+      return;
+    }
+    if (req.method !== "POST") {
+      res.setHeader("allow", "GET, POST");
+      sendText(res, 405, "Method Not Allowed");
+      return;
+    }
+    if (!isLocalOrigin(req.headers.origin, port)) {
+      sendText(res, 403, "Forbidden");
+      return;
+    }
+    if (settings === undefined) {
+      sendText(res, 404, "Not Found");
+      return;
+    }
+    const body = await readBody(req);
+    const form = body === undefined ? undefined : settingsFormOf(body);
+    if (form === undefined) {
+      sendText(res, 400, "Bad Request");
+      return;
+    }
+    let pr: { number: number; url: string };
+    try {
+      pr = await settings.save(form);
+    } catch (e) {
+      options.log(
+        `管理画面からの設定の保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      sendText(res, 500, "Internal Server Error");
+      return;
+    }
+    sendJson(res, 200, { number: pr.number, url: pr.url });
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     if (!isLocalHost(req.headers.host, port)) {
       sendText(res, 403, "Forbidden");
       return;
     }
     const { pathname } = new URL(req.url ?? "/", `http://${HOST}`);
+    if (pathname === SETTINGS_ROUTE) {
+      await handleSettings(req, res);
+      return;
+    }
     const action = CONTROL_ROUTES.get(pathname);
     if (action !== undefined) {
       await handleControl(req, res, action);

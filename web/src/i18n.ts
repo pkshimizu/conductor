@@ -81,6 +81,83 @@ export interface Messages {
   workingNow: string;
   workingNote: string;
   noTimeline: string;
+  // ---- 設定 ----
+  settingsSub: string;
+  discard: string;
+  reviewAndSave: string;
+  readonly: string;
+  repo: string;
+  notify: string;
+  notifyHelp: string;
+  columns: string;
+  columnsHelp: string;
+  secLimits: string;
+  rejectLimit: string;
+  objectLimit: string;
+  concurrency: string;
+  dflt: string;
+  secMerge: string;
+  approval: string;
+  autoDesc: string;
+  humanDesc: string;
+  secBehavior: string;
+  poll: string;
+  pollHelp: string;
+  secUnit: string;
+  language2: string;
+  shots: string;
+  shotsHelp: string;
+  secCommands: string;
+  optional: string;
+  required: string;
+  secProtected: string;
+  protectedHelp: string;
+  addGlob: string;
+  add: string;
+  remove: string;
+  added: string;
+  none: string;
+  secPerms: string;
+  permsHelp: string;
+  /** 「<役>に操作を追加」の後ろ */
+  addPerm: string;
+  secDiscord: string;
+  useDiscord: string;
+  chReq: string;
+  chQ: string;
+  chNotice: string;
+  users: string;
+  token: string;
+  tokenSet: string;
+  tokenUnset: string;
+  tokenHelp: string;
+  secPrompts: string;
+  role: string;
+  tabGeneral: string;
+  tabCommands: string;
+  tabPerms: string;
+  tabDiscord: string;
+  tabPrompts: string;
+  /** タブの誤りの件数の後ろ（例: 「3件の誤り」） */
+  tabErr: string;
+  tabChanged: string;
+  errInt: string;
+  errPoll: string;
+  errRequired: string;
+  errUser: string;
+  errMinOne: string;
+  chatRemoved: string;
+  diffTitle: string;
+  diffBody: string;
+  diffOk: string;
+  /** 保存して PR を作ったときの知らせ（{n} は PR の番号） */
+  toastSaved: string;
+  /** 保存後の、再起動の案内 */
+  postSaveNote: string;
+  /** 保存に失敗したとき */
+  saveFailed: string;
+  /** 指示ファイルが無い役 */
+  noPrompts: string;
   /** 役の結果 */
   results: Readonly<Record<ResultKey, string>>;
   /** 進み具合の段階 */
@@ -183,6 +260,80 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     workingNow: "作業中",
     workingNote: "作業中の出力は表示しません。終わると結果がここに並びます。",
     noTimeline: "まだ経過はありません。",
+    settingsSub:
+      "対象リポジトリの .conductor/config.yaml を編集します。保存すると変更をコミットして PR を作ります。",
+    discard: "変更を取り消す",
+    reviewAndSave: "差分を確認して保存",
+    readonly: "見るだけ",
+    repo: "リポジトリ",
+    notify: "Blocked のときに知らせる人",
+    notifyHelp: "GitHub ユーザー名",
+    columns: "列の名前",
+    columnsHelp: "GitHub Projects の列名と合わせます",
+    secLimits: "上限とマージ",
+    rejectLimit: "差し戻しの上限",
+    objectLimit: "異議の上限",
+    concurrency: "レビュー役を同時に動かす数",
+    dflt: "既定",
+    secMerge: "マージ",
+    approval: "承認のしかた",
+    autoDesc: "レビュー役が承認したらすぐマージ",
+    humanDesc: "人が PR にコメントしてからマージ",
+    secBehavior: "動作",
+    poll: "GitHub を確認する間隔",
+    pollHelp: "10 秒以上",
+    secUnit: "秒",
+    language2: "役が書く文章の言語",
+    shots: "画面の撮影を保存するフォルダ",
+    shotsHelp: "空なら撮影しません",
+    secCommands: "コマンド",
+    optional: "任意",
+    required: "必須",
+    secProtected: "実装役に変えさせないファイル",
+    protectedHelp:
+      "glob で指定します。実装役はここに当てはまるファイルを変更できません。",
+    addGlob: "glob を追加",
+    add: "追加",
+    remove: "削除",
+    added: "追加",
+    none: "なし",
+    secPerms: "役ごとの追加許可",
+    permsHelp:
+      "役ごとに、追加で許可する操作を指定します（例: Bash(npm run lint)）",
+    addPerm: "に操作を追加",
+    secDiscord: "窓口（Discord）",
+    useDiscord: "Discord を使う",
+    chReq: "要件のチャンネル ID",
+    chQ: "質問のチャンネル ID",
+    chNotice: "お知らせのチャンネル ID",
+    users: "受け付ける人のユーザー ID",
+    token: "トークン",
+    tokenSet: "設定済み",
+    tokenUnset: "未設定",
+    tokenHelp: "値は画面に表示しません",
+    secPrompts: "役ごとの指示ファイル",
+    role: "役",
+    tabGeneral: "基本",
+    tabCommands: "コマンドとファイル",
+    tabPerms: "役の許可",
+    tabDiscord: "窓口（Discord）",
+    tabPrompts: "指示ファイル",
+    tabErr: "件の誤り",
+    tabChanged: "変更あり",
+    errInt: "1 以上の整数を入れてください",
+    errPoll: "10 以上の整数を入れてください",
+    errRequired: "入力してください",
+    errUser: "GitHub のユーザー名を入れてください",
+    errMinOne: "1件以上必要です",
+    chatRemoved: "（まるごと削除）",
+    diffTitle: "変更内容の確認",
+    diffBody: "次の変更をコミットして PR を作ります。",
+    diffOk: "保存して PR を作成",
+    toastSaved: "PR #{n} を作りました",
+    postSaveNote:
+      "PR をマージしてから再起動してください。マージ前に再起動しても反映されません。",
+    saveFailed: "保存できませんでした。conductor のログを確認してください。",
+    noPrompts: "指示ファイルはありません",
     results: {
       approved: "承認",
       changes: "差し戻し",
@@ -285,6 +436,81 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     workingNote:
       "Output from a running role is not shown. Its result appears here when it finishes.",
     noTimeline: "Nothing has happened yet.",
+    settingsSub:
+      "Edit .conductor/config.yaml in the target repository. Saving commits the change and opens a pull request.",
+    discard: "Discard changes",
+    reviewAndSave: "Review changes and save",
+    readonly: "Read-only",
+    repo: "Repository",
+    notify: "Notify when an issue is blocked",
+    notifyHelp: "GitHub username",
+    columns: "Column names",
+    columnsHelp: "Must match the column names in GitHub Projects",
+    secLimits: "Limits and merge",
+    rejectLimit: "Maximum rejections",
+    objectLimit: "Maximum objections",
+    concurrency: "Reviewers running at the same time",
+    dflt: "Default",
+    secMerge: "Merge",
+    approval: "Approval mode",
+    autoDesc: "Merge as soon as the reviewers approve",
+    humanDesc: "Merge after a person comments on the PR",
+    secBehavior: "Behavior",
+    poll: "GitHub poll interval",
+    pollHelp: "10 seconds or more",
+    secUnit: "seconds",
+    language2: "Language roles write in",
+    shots: "Screenshot folder",
+    shotsHelp: "Leave empty to turn screenshots off",
+    secCommands: "Commands",
+    optional: "Optional",
+    required: "Required",
+    secProtected: "Files the implementer must not change",
+    protectedHelp:
+      "Glob patterns. The implementer cannot modify any file that matches.",
+    addGlob: "Add a glob",
+    add: "Add",
+    remove: "Remove",
+    added: "New",
+    none: "None",
+    secPerms: "Extra permissions per role",
+    permsHelp:
+      "Additional operations each role is allowed to run (e.g. Bash(npm run lint))",
+    addPerm: ": add an operation",
+    secDiscord: "Intake (Discord)",
+    useDiscord: "Use Discord",
+    chReq: "Requirements channel ID",
+    chQ: "Questions channel ID",
+    chNotice: "Announcements channel ID",
+    users: "Allowed user IDs",
+    token: "Token",
+    tokenSet: "Set",
+    tokenUnset: "Not set",
+    tokenHelp: "The value is never shown",
+    secPrompts: "Role instruction files",
+    role: "Role",
+    tabGeneral: "General",
+    tabCommands: "Commands & files",
+    tabPerms: "Role permissions",
+    tabDiscord: "Intake (Discord)",
+    tabPrompts: "Instruction files",
+    tabErr: " errors",
+    tabChanged: "Changed",
+    errInt: "Enter a whole number of 1 or more",
+    errPoll: "Enter a whole number of 10 or more",
+    errRequired: "This field is required",
+    errUser: "Enter a GitHub username",
+    errMinOne: "At least one is required",
+    chatRemoved: " (removed entirely)",
+    diffTitle: "Review changes",
+    diffBody:
+      "These changes will be committed and a pull request will be opened.",
+    diffOk: "Save and open PR",
+    toastSaved: "Opened PR #{n}",
+    postSaveNote:
+      "Merge the pull request, then restart. Restarting before the merge will not apply the changes.",
+    saveFailed: "Could not save. Check the conductor log.",
+    noPrompts: "No instruction files",
     results: {
       approved: "Approved",
       changes: "Changes requested",
