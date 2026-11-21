@@ -60,8 +60,11 @@ export interface LoopDeps {
   config: Config;
   store: Store;
   board: LoopBoard;
-  /** 入口確認。そろっていればテスト役の列へ移す */
-  pickUp(issue: LoopIssue): Promise<{ accepted: boolean }>;
+  /**
+   * 入口確認。そろっていればテスト役の列へ移す。
+   * 「先に済ませる Issue」を待つ（Ready に残す）なら、まだ開いている番号を waiting で返す
+   */
+  pickUp(issue: LoopIssue): Promise<{ accepted: boolean; waiting?: number[] }>;
   test(issue: LoopIssue, ctx?: StepContext): Promise<StepResult>;
   implement(
     issue: LoopIssue,
@@ -519,6 +522,11 @@ async function attempt(
   }
   const role = state.steps.roleOf(controller);
   state.steps.end(controller);
+  if (error === undefined && result?.status === PREREQUISITES_WAITING) {
+    // Ready に残して待つ Issue は処理中に数えない（中断されても動かさない）
+    state.failures.delete(n);
+    return;
+  }
   if (error === undefined) {
     // 中断されても最後まで進んだ段階（マージなど）は成功として扱う
     state.failures.delete(n);
@@ -769,15 +777,45 @@ export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
     return;
   }
 
-  const ready = inColumn(columns.ready)[0]?.issue;
-  if (!ready) return;
-  await attempt(deps, state, ready, async (ctx) => {
-    const r = await deps.pickUp(ready);
-    if (!r.accepted) return { status: "blocked" };
-    if (ctx.signal.aborted) throw abortError();
-    const record = await store.get({ repo, issue: ready.number });
-    return advance(deps, ready, record?.checkpoint?.stage ?? "testing", ctx);
-  });
+  // Ready の並び順に確かめ、「先に済ませる Issue」を待つ Issue は Ready に残して次を確かめる
+  const readies = inColumn(columns.ready);
+  if (readies.length === 0) return;
+  const waits: { issue: number; waiting: number[] }[] = [];
+  for (const { issue: ready } of readies) {
+    const outcome: { waiting?: number[] } = {};
+    await attempt(deps, state, ready, async (ctx) => {
+      const r = await deps.pickUp(ready);
+      if (r.waiting !== undefined) {
+        outcome.waiting = r.waiting;
+        return { status: PREREQUISITES_WAITING };
+      }
+      if (!r.accepted) return { status: "blocked" };
+      if (ctx.signal.aborted) throw abortError();
+      const record = await store.get({ repo, issue: ready.number });
+      return advance(deps, ready, record?.checkpoint?.stage ?? "testing", ctx);
+    });
+    // 始めた・Blocked にした・失敗した Issue があれば、この確認はここまで
+    if (outcome.waiting === undefined) return;
+    waits.push({ issue: ready.number, waiting: outcome.waiting });
+  }
+  deps.log(waitingMessage(columns.ready, waits));
+}
+
+/** Ready から拾った Issue が「先に済ませる Issue」を待っているときの、段階の結果 */
+const PREREQUISITES_WAITING = "waiting_prerequisites";
+
+/** Ready のどの Issue も着手できないときのログ */
+export function waitingMessage(
+  ready: string,
+  waits: readonly { issue: number; waiting: readonly number[] }[],
+): string {
+  return [
+    `${ready} に着手できる Issue がありません（先に済ませる Issue を待っています）:`,
+    ...waits.map(
+      (w) =>
+        `- #${w.issue}: ${w.waiting.map((n) => `#${n}`).join("、")} がまだ開いています`,
+    ),
+  ].join("\n");
 }
 
 async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {

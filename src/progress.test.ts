@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
 import {
+  cachedStatusOf,
   checkProgress,
   completedMessage,
+  isDone,
+  prerequisiteState,
   prerequisitesOf,
   type ProgressBoard,
   type WorkIssueStatus,
@@ -94,6 +97,40 @@ describe("prerequisitesOf", () => {
   });
 });
 
+describe("isDone", () => {
+  it("閉じていれば（マージした PR があっても無くても）済んだとみなす", () => {
+    expect(isDone({ body: "", closed: true })).toBe(true);
+    expect(isDone({ body: "", merged: { number: 1, url: "u" } })).toBe(true);
+    expect(isDone({ body: "", closed: false })).toBe(false);
+    expect(isDone({ body: "" })).toBe(false);
+  });
+});
+
+describe("prerequisiteState", () => {
+  it("まだ開いている番号と、リポジトリに無い番号を分ける。自分自身は無視し、Issue ごとに1回だけ問い合わせる", async () => {
+    const queried: number[] = [];
+    const statuses: Record<number, WorkIssueStatus> = {
+      5: { body: "", closed: true },
+      6: { body: "" },
+      10: { body: "" },
+    };
+    const statusOf = cachedStatusOf({
+      workIssueStatus: (n) => {
+        queried.push(n);
+        return Promise.resolve(statuses[n]);
+      },
+    });
+    expect(await prerequisiteState(10, body([10, 5, 6, 99]), statusOf)).toEqual(
+      { open: [6], missing: [99] },
+    );
+    expect(await prerequisiteState(11, body([5, 6, 99]), statusOf)).toEqual({
+      open: [6],
+      missing: [99],
+    });
+    expect(queried).toEqual([5, 6, 99]);
+  });
+});
+
 describe("completedMessage", () => {
   it("要件の要約と PR の一覧を書く", () => {
     const text = completedMessage("検索をつけたい", [
@@ -160,6 +197,21 @@ describe("checkProgress", () => {
     expect(notices[0]?.text).toContain("#12");
     expect((await t.store.getRequirement("10"))?.state).toBe("done");
     expect(t.moved).toEqual([]);
+  });
+
+  it("先に済ませる Issue がマージされずに閉じていても Ready に移す（完了の知らせは書かない）", async () => {
+    const t = await setup(
+      {
+        5: { body: body([]), closed: true, column: "Done" },
+        6: { body: body([5]) },
+      },
+      [5, 6],
+    );
+    expect(await checkProgress(t.deps, t.requirement)).toEqual({
+      status: "started",
+    });
+    expect(t.moved).toEqual([[6, "Ready"]]);
+    expect(t.chat.messages.get(NOTICES) ?? []).toEqual([]);
   });
 
   it("作業中でない要件や、作業用 Issue が無い要件は何もしない", async () => {

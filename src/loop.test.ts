@@ -14,6 +14,7 @@ import {
   type LoopDeps,
   type LoopIssue,
   type StepResult,
+  waitingMessage,
 } from "./loop.js";
 import { storeFile } from "./start.js";
 import { MemoryStore, type Stage } from "./store.js";
@@ -27,7 +28,12 @@ const issue = (number: number): LoopIssue => ({
 
 function setup(
   columns: Record<string, number[]>,
-  options: { conflict?: boolean; pickUp?: boolean } = {},
+  options: {
+    conflict?: boolean;
+    pickUp?: boolean;
+    /** Issue ごとの、まだ開いている「先に済ませる Issue」（あれば入口確認は待つ） */
+    waiting?: Record<number, number[]>;
+  } = {},
 ) {
   const config = parseConfig(
     [
@@ -74,6 +80,10 @@ function setup(
     },
     pickUp: (i) => {
       calls.push(`pickUp #${i.number}`);
+      const waiting = options.waiting?.[i.number];
+      if (waiting !== undefined) {
+        return Promise.resolve({ accepted: false, waiting });
+      }
       return Promise.resolve({ accepted: options.pickUp ?? true });
     },
     test: step("test"),
@@ -320,6 +330,41 @@ describe("tick", () => {
     const t = setup({ Ready: [3] }, { pickUp: false });
     await tick(t.deps, newLoopState());
     expect(t.calls).toEqual(["pickUp #3"]);
+  });
+
+  it("入口確認で断られたら（Blocked にしたら）、次の Ready はこの確認では拾わない", async () => {
+    const t = setup({ Ready: [3, 4] }, { pickUp: false });
+    await tick(t.deps, newLoopState());
+    expect(t.calls).toEqual(["pickUp #3"]);
+  });
+
+  it("先に済ませる Issue を待つ Issue は Ready に残し、並び順で次の Issue を確かめて始める", async () => {
+    const t = setup({ Ready: [5, 3, 4] }, { waiting: { 3: [1] } });
+    const state = newLoopState();
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["pickUp #3", "pickUp #4", "test #4"]);
+    // 待っている Issue は処理中に数えない（中断を受け付けない）
+    expect(state.steps.abort(3)).toBe(false);
+    expect(
+      t.logs.some((l) => l.includes("着手できる Issue がありません")),
+    ).toBe(false);
+  });
+
+  it("どれも着手できなければ何も始めず、待っている Issue と開いている番号をログに出す", async () => {
+    const t = setup({ Ready: [3, 4] }, { waiting: { 3: [1], 4: [1, 2] } });
+    await tick(t.deps, newLoopState());
+    expect(t.calls).toEqual(["pickUp #3", "pickUp #4"]);
+    expect(t.moves).toEqual([]);
+    expect(t.comments).toEqual([]);
+    expect(t.logs).toContain(
+      waitingMessage("Ready", [
+        { issue: 3, waiting: [1] },
+        { issue: 4, waiting: [1, 2] },
+      ]),
+    );
+    expect(waitingMessage("Ready", [{ issue: 4, waiting: [1, 2] }])).toContain(
+      "#4: #1、#2 がまだ開いています",
+    );
   });
 
   it("作業中の Issue があれば、それだけを1段階進め、Ready は拾わない", async () => {

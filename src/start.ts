@@ -212,7 +212,7 @@ export async function buildLoopDeps(
     ...(decompose === undefined ? {} : { decompose }),
     ...(progress === undefined ? {} : { progress }),
     log,
-    pickUp: (issue) => pickUp({ config, store, board: github }, issue),
+    pickUp: (issue) => pickUp({ config, store, board: github, log }, issue),
     test: (issue, ctx) =>
       runTester(
         {
