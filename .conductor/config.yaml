@@ -31,6 +31,9 @@ roles:
       - Bash(npm run lint *)
       - Bash(npm run format)
       - Bash(npm run format:check)
+      - Bash(npm install)
+      - Bash(npm install *) # 依存を足す（例: npm install --save-dev --save-exact react-markdown）
+      - Bash(npm i *)
 chat:
   type: discord
   channels:
