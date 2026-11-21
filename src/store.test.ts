@@ -36,6 +36,22 @@ describe.each([
     expect(await store.get(KEY)).toBeUndefined();
   });
 
+  it("止まった理由を入れると、止まった日時を store の時刻で入れる。理由を消すと日時も消す", async () => {
+    await store.update(KEY, { checkpoint: { stage: "reviewing" } });
+    clock.advance(60_000);
+    const r = await store.update(KEY, { blockedReason: "壊れた" });
+    expect(r.blockedReason).toBe("壊れた");
+    expect(r.blockedAt).toBe("2026-11-15T00:01:00.000Z");
+    // 理由に触れない書き直しでは日時を変えない
+    clock.advance(60_000);
+    await store.update(KEY, { rejections: 1 });
+    expect((await store.get(KEY))?.blockedAt).toBe("2026-11-15T00:01:00.000Z");
+    const cleared = await store.update(KEY, { blockedReason: undefined });
+    expect(cleared.blockedReason).toBeUndefined();
+    expect(cleared.blockedAt).toBeUndefined();
+    expect(await store.get(KEY)).not.toHaveProperty("blockedAt");
+  });
+
   it("AC1: 回数・ブランチ・PR・中断点・ハッシュを保存して取得できる", async () => {
     await store.update(KEY, {
       rejections: 2,

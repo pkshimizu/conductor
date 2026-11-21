@@ -7,6 +7,7 @@ import {
   runLoop,
   newLoopState,
   tick,
+  type LoopActivity,
   type LoopDeps,
   type LoopIssue,
   type StepResult,
@@ -506,6 +507,36 @@ describe("runLoop", () => {
       "idle",
       "sleep",
     ]);
+  });
+
+  it("動いている役と確認した時刻を、変わるたびに知らせる（CI の後はレビュー役）", async () => {
+    const t = setup({ Reviewing: [4] });
+    await t.setStage(4, "ci");
+    const controller = new AbortController();
+    const activities: LoopActivity[] = [];
+    t.deps.onActivity = (a) => activities.push(a);
+    t.deps.sleep = () => {
+      controller.abort();
+      return Promise.resolve();
+    };
+    const before = Date.now();
+    await runLoop(t.deps, controller.signal, { intervalMs: 1000 });
+
+    expect(activities.map((a) => a.running?.role ?? "-")).toEqual([
+      "-",
+      "ci",
+      "-",
+      "reviewer",
+      "-",
+      "-",
+    ]);
+    expect(activities.map((a) => a.running?.issue)).toContain(4);
+    const last = activities.at(-1);
+    const checked = Date.parse(last?.lastCheckedAt ?? "");
+    expect(checked).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(last?.nextCheckAt ?? "")).toBe(checked + 1000);
+    // 確認している間は、次の確認の時刻を持たない
+    expect(activities[0]?.nextCheckAt).toBeUndefined();
   });
 });
 

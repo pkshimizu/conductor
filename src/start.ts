@@ -4,7 +4,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { startAdminServer } from "./admin-server.js";
+import { type AdminStatus, startAdminServer } from "./admin-server.js";
 import { mergeApproved } from "./approval.js";
 import { type ClaudeDeps, realDeps, runRole, withLanguage } from "./claude.js";
 import type { Chat } from "./chat.js";
@@ -15,6 +15,11 @@ import {
   loadRoleDocs,
   loadRoleInstructions,
 } from "./config.js";
+import {
+  type DashboardData,
+  type DashboardDeps,
+  loadDashboard,
+} from "./dashboard.js";
 import { runDecomposer } from "./decomposer.js";
 import { DiscordChat } from "./discord.js";
 import { shellExec } from "./exec.js";
@@ -24,7 +29,7 @@ import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
 import { checkProgress } from "./progress.js";
 import type { RespecDeps } from "./respec.js";
-import { runLoop, type LoopDeps } from "./loop.js";
+import { type LoopActivity, runLoop, type LoopDeps } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
 import { checkSpecApproval } from "./spec-approval.js";
@@ -212,6 +217,55 @@ export async function buildLoopDeps(
   };
 }
 
+export interface DashboardRefresher {
+  /** 稼働状態か常駐ループの状態が変わった。内容を読み直して知らせる */
+  update(change: { status?: AdminStatus; activity?: LoopActivity }): void;
+  /** 読み直しの途中なら、終わるまで待つ */
+  idle(): Promise<void>;
+}
+
+/**
+ * ダッシュボードの内容を読み直して publish に渡す。
+ * 読み直しは1つずつ行い、途中で変わったら終わってからもう1回だけ読み直す（GitHub に要求を重ねない）。
+ * 読めなくても常駐ループは止めない
+ */
+export function dashboardRefresher(
+  deps: Pick<DashboardDeps, "config" | "store" | "board">,
+  publish: (data: DashboardData) => void,
+  log: (text: string) => void,
+): DashboardRefresher {
+  let status: AdminStatus = "running";
+  let activity: LoopActivity = {};
+  let pending = false;
+  let running: Promise<void> | undefined;
+
+  const loop = async () => {
+    while (pending) {
+      pending = false;
+      try {
+        publish(await loadDashboard({ ...deps, status, activity }));
+      } catch (e) {
+        log(
+          `ダッシュボードの内容を読めませんでした: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    running = undefined;
+  };
+
+  return {
+    update(change) {
+      if (change.status !== undefined) status = change.status;
+      if (change.activity !== undefined) activity = change.activity;
+      pending = true;
+      running ??= loop();
+    },
+    async idle() {
+      await running;
+    },
+  };
+}
+
 /**
  * 常駐して Issue を進める。同じプロセスから管理画面も配信し、稼働状態を知らせる。
  * Ctrl+C を受けたら、今の段階を終えてから止まる
@@ -238,11 +292,26 @@ export async function start(
     });
     try {
       const deps = await buildLoopDeps(repoDir, config, store, log);
+      const dashboard = dashboardRefresher(
+        { config, store, board: deps.board },
+        (data) => admin.setDashboard(data),
+        log,
+      );
       await runLoop(
-        { ...deps, onStatus: (status) => admin.setStatus(status) },
+        {
+          ...deps,
+          onStatus: (status) => {
+            admin.setStatus(status);
+            dashboard.update({ status });
+          },
+          onActivity: (activity) => dashboard.update({ activity }),
+        },
         controller.signal,
+        { intervalMs: config.poll_interval * 1000 },
       );
       admin.setStatus("stopped");
+      dashboard.update({ status: "stopped" });
+      await dashboard.idle();
     } finally {
       await admin.close();
     }

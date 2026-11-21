@@ -57,12 +57,20 @@ export interface IssueRecord extends IssueKey {
    * store の update が、checkpoint.stage が変わったときだけ入れる（同じ段階の書き直し・再開では変えない）
    */
   stageStartedAt?: string;
+  /** Blocked にしたときの止まった理由（blockIssue が入れる） */
+  blockedReason?: string;
+  /**
+   * Blocked にした時刻（ISO 8601）。
+   * store の update が、blockedReason を入れたときに入れる（blockedReason を消したら消す）
+   */
+  blockedAt?: string;
   /** 最後に更新した時刻（ISO 8601） */
   updatedAt: string;
 }
 
 /** update で書き換えない項目（store が入れる） */
-type StoreManagedKey = "repo" | "issue" | "updatedAt" | "stageStartedAt";
+type StoreManagedKey =
+  "repo" | "issue" | "updatedAt" | "stageStartedAt" | "blockedAt";
 
 /** 書き換える項目。undefined を入れた項目は消す */
 export type IssueUpdate = {
@@ -317,7 +325,8 @@ export function emptyRecord(key: IssueKey, now: Date): IssueRecord {
 /**
  * update の規則（undefined は削除）を当てはめる。
  * checkpoint.stage が今の記録と変わったとき（または段階を始めた時刻が無いとき）だけ、
- * stageStartedAt を now にする。checkpoint を消したら stageStartedAt も消す
+ * stageStartedAt を now にする。checkpoint を消したら stageStartedAt も消す。
+ * blockedReason を入れたら blockedAt を now にし、消したら blockedAt も消す
  */
 export function applyUpdate(
   record: IssueRecord,
@@ -326,7 +335,7 @@ export function applyUpdate(
 ): IssueRecord {
   const next: Record<string, unknown> = { ...record };
   for (const [k, v] of Object.entries(update)) {
-    if (k === "stageStartedAt") continue;
+    if (k === "stageStartedAt" || k === "blockedAt") continue;
     if (v === undefined) delete next[k];
     else next[k] = v;
   }
@@ -340,6 +349,10 @@ export function applyUpdate(
     record.stageStartedAt === undefined
   ) {
     result.stageStartedAt = now.toISOString();
+  }
+  if ("blockedReason" in update) {
+    if (update.blockedReason === undefined) delete result.blockedAt;
+    else result.blockedAt = now.toISOString();
   }
   return result;
 }

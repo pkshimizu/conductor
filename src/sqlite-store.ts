@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS issues (
   checkpoint TEXT,
   protected_hash TEXT,
   stage_started_at TEXT,
+  blocked_reason TEXT,
+  blocked_at TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (repo, issue)
 );
@@ -139,6 +141,8 @@ interface AddedColumn {
 /** 前の版で作った issues に無い列を足す */
 const ADDED_ISSUE_COLUMNS: readonly AddedColumn[] = [
   { name: "stage_started_at", type: "TEXT" },
+  { name: "blocked_reason", type: "TEXT" },
+  { name: "blocked_at", type: "TEXT" },
 ];
 
 /** 前の版で作ったファイルに無い列を足す（既存の記録は壊さない） */
@@ -232,6 +236,8 @@ interface IssueRow {
   checkpoint: string | null;
   protected_hash: string | null;
   stage_started_at: string | null;
+  blocked_reason: string | null;
+  blocked_at: string | null;
   updated_at: string;
 }
 
@@ -249,6 +255,8 @@ function fromRow(row: IssueRow): IssueRecord {
     r.checkpoint = JSON.parse(row.checkpoint) as Checkpoint;
   if (row.protected_hash !== null) r.protectedHash = row.protected_hash;
   if (row.stage_started_at !== null) r.stageStartedAt = row.stage_started_at;
+  if (row.blocked_reason !== null) r.blockedReason = row.blocked_reason;
+  if (row.blocked_at !== null) r.blockedAt = row.blocked_at;
   return r;
 }
 
@@ -302,8 +310,8 @@ export class SqliteStore implements Store {
     this.db
       .prepare(
         `INSERT INTO issues
-           (repo, issue, rejections, objections, branch, pr, checkpoint, protected_hash, stage_started_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (repo, issue, rejections, objections, branch, pr, checkpoint, protected_hash, stage_started_at, blocked_reason, blocked_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, issue) DO UPDATE SET
            rejections = excluded.rejections,
            objections = excluded.objections,
@@ -312,6 +320,8 @@ export class SqliteStore implements Store {
            checkpoint = excluded.checkpoint,
            protected_hash = excluded.protected_hash,
            stage_started_at = excluded.stage_started_at,
+           blocked_reason = excluded.blocked_reason,
+           blocked_at = excluded.blocked_at,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -324,6 +334,8 @@ export class SqliteStore implements Store {
         next.checkpoint ? JSON.stringify(next.checkpoint) : null,
         next.protectedHash ?? null,
         next.stageStartedAt ?? null,
+        next.blockedReason ?? null,
+        next.blockedAt ?? null,
         next.updatedAt,
       );
     return next;

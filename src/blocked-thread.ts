@@ -141,6 +141,7 @@ export function usesBlockedThreads(config: Pick<Config, "chat">): boolean {
 
 /**
  * Issue を Blocked にする（Blocked にするどの経路もこれを使う）。
+ * - 止まった理由と日時（store の時刻）を記録に残す（管理画面のダッシュボードに出す）
  * - 窓口があれば、メンションせずに止まった理由をコメントし、記録する（次の確認でスレッドを作る）
  * - 窓口が無ければ、Issue でメンションする（Lv1 と同じ）
  */
@@ -157,6 +158,8 @@ export async function blockIssue(
   const { config, store, board } = deps;
   const { columns, repo } = config.github;
   await board.moveIssue(issue, columns.blocked);
+  // 管理画面に出すため、窓口の有無によらず止まった理由と日時を残す（止まった段階は checkpoint.stage）
+  await store.update({ repo, issue }, { blockedReason: input.reason });
   if (usesBlockedThreads(config)) {
     await noteBlocked(store, { repo, issue }, input.reason);
     await board.comment(

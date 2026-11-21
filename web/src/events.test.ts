@@ -11,6 +11,36 @@ describe("parseEvent", () => {
     });
   });
 
+  it("ダッシュボードの内容があれば一緒に読む。形が違えば省く", () => {
+    const dashboard = {
+      status: "running",
+      repo: "o/r",
+      pollInterval: 30,
+      merge: "auto",
+      limits: { rejections: 3, objections: 2 },
+      blocked: [],
+      counts: [{ column: "Ready", count: 1 }],
+    };
+    const data = JSON.stringify({
+      status: "running",
+      repo: "o/r",
+      project: 3,
+      dashboard,
+    });
+    expect(parseEvent(data)?.dashboard).toEqual(dashboard);
+    const broken = JSON.stringify({
+      status: "running",
+      repo: "o/r",
+      project: 3,
+      dashboard: { ...dashboard, merge: "sometimes" },
+    });
+    expect(parseEvent(broken)).toEqual({
+      status: "running",
+      repo: "o/r",
+      project: 3,
+    });
+  });
+
   it("形が違えば undefined", () => {
     expect(parseEvent("not json")).toBeUndefined();
     expect(parseEvent("null")).toBeUndefined();

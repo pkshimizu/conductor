@@ -3,6 +3,7 @@
  * 共通の枠（Layout）に渡す。各画面の中身は後の Issue で作る
  */
 import { type ReactElement, useEffect, useState } from "react";
+import { Dashboard } from "./Dashboard.js";
 import { type AdminInfo, EVENTS_URL, parseEvent } from "./events.js";
 import { type Lang, MESSAGES } from "./i18n.js";
 import { loadLanguage, saveLanguage } from "./language.js";
@@ -63,11 +64,22 @@ function usePath(): [string, (path: string) => void] {
   return [path, navigate];
 }
 
+/** 今の時刻。1秒ごとに進める（経過時間と次の確認までの秒数を描き直すため） */
+function useNow(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return now;
+}
+
 export function App(): ReactElement | null {
   const [lang, setLang] = useState<Lang>(storedLanguage);
   const scheme = useColorScheme();
   const [path, navigate] = usePath();
   const info = useAdminInfo();
+  const now = useNow();
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -84,6 +96,12 @@ export function App(): ReactElement | null {
     saveLanguage(window.localStorage, next);
     setLang(next);
   };
+  const menu = menuOf(path);
+  // 稼働状態はダッシュボードの内容より新しいことがある（つながらなくなったときなど）ので、知らせの稼働状態を使う
+  const dashboard =
+    info.dashboard === undefined
+      ? undefined
+      : { ...info.dashboard, status: info.status };
 
   return (
     <Layout
@@ -96,7 +114,16 @@ export function App(): ReactElement | null {
       onLanguage={changeLanguage}
       onNavigate={navigate}
     >
-      <h1 style={{ margin: 0, fontSize: 20 }}>{titles[menuOf(path)]}</h1>
+      {menu === "dashboard" && dashboard !== undefined ? (
+        <Dashboard
+          data={dashboard}
+          lang={lang}
+          now={now}
+          onNavigate={navigate}
+        />
+      ) : (
+        <h1 style={{ margin: 0, fontSize: 20 }}>{titles[menu]}</h1>
+      )}
     </Layout>
   );
 }
