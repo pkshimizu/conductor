@@ -2,12 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MemoryChat } from "./chat.js";
 import type { ChatConfig } from "./config.js";
-import {
-  headline,
-  quote,
-  receiveRequirements,
-  threadName,
-} from "./requirements.js";
+import { receiveRequirements, threadName } from "./requirements.js";
 import { MemoryStore } from "./store.js";
 
 const chatConfig: ChatConfig = {
@@ -34,23 +29,6 @@ describe("threadName", () => {
   });
 });
 
-describe("quote", () => {
-  it("各行の先頭に > を付ける", () => {
-    expect(quote("a\r\nb\n")).toBe("> a\n> b\n> ");
-  });
-  it("本文が空なら（本文なし）を引用する", () => {
-    expect(quote("")).toBe("> （本文なし）");
-  });
-});
-
-describe("headline", () => {
-  it("書いた人と要件の名前を含む", () => {
-    expect(headline({ id: "1", authorId: "u1", text: "検索\n詳細" })).toBe(
-      "要件を受け取りました（<@u1>）: 検索",
-    );
-  });
-});
-
 describe("receiveRequirements", () => {
   it("許可した人の投稿だけを受け取り、読んだ位置を進める", async () => {
     const chat = new MemoryChat("bot");
@@ -64,11 +42,12 @@ describe("receiveRequirements", () => {
     const [req] = await store.listRequirements();
     expect(req?.messageId).toBe(posted.id);
     const thread = chat.threads.get(req!.threadId!);
-    expect(thread?.channelId).toBe("200");
+    // 要件チャンネルのその投稿からスレッドを作り、何も書かない
+    expect(thread?.channelId).toBe("100");
+    expect(thread?.messageId).toBe(posted.id);
     expect(thread?.name).toBe("検索");
-    expect(chat.messages.get(req!.threadId!)?.map((m) => m.text)).toEqual([
-      "> 検索",
-    ]);
+    expect(chat.messages.get(req!.threadId!)).toBeUndefined();
+    expect(chat.messages.get("200")).toBeUndefined();
     expect(await store.getReadPosition("100")).toBe(last.id);
     expect(logs).toHaveLength(1);
 

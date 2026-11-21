@@ -348,8 +348,12 @@ export async function runDecomposer(
     ]);
   }
 
-  // 要件の本文は、スレッドの Bot の最初の書き込み（受け取りのときに書いた引用）
-  const quotedText = await requirementText(chat, threadId);
+  // 要件の本文は、要件チャンネルの元の投稿
+  const quotedText = await requirementText(
+    chat,
+    config.chat,
+    requirement.messageId,
+  );
 
   const attempts = config.limits.rejections + 1;
   let retry: { issues: WorkIssue[]; problems: string[] } | undefined;

@@ -1,32 +1,34 @@
 /**
- * 要件の本文の取り出し。要件の本文は、スレッドで Bot が最初に書いた投稿（受け取りのときに書いた引用）。
- * 引用の形や書く場所が変わったら、ここだけを直す。
+ * 要件の本文の取り出し。要件の本文は、要件チャンネルの元の投稿（記録の messageId）。
+ * スレッドがどのチャンネルにあっても（以前の要件は質問チャンネル）、同じ読み方で取れる。
+ * 読む場所が変わったら、ここだけを直す。
  */
 import type { Chat, ChatMessage } from "./chat.js";
+import type { ChatConfig } from "./config.js";
 
-/** 引用の形（"> "）を外す */
-export function unquote(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .map((l) => l.replace(/^> ?/, ""))
-    .join("\n");
-}
-
-/** 読んだスレッドの投稿から要件の本文を取り出す。Bot の書き込みが無ければ undefined */
-export function requirementTextFrom(
-  thread: readonly ChatMessage[],
-  botId: string,
-): string | undefined {
-  const quoted = thread.find((m) => m.authorId === botId);
-  return quoted === undefined ? undefined : unquote(quoted.text);
-}
-
-/** スレッドを読んで要件の本文を取り出す。Bot の書き込みが無ければ undefined */
+/**
+ * 要件チャンネルの元の投稿を読んで要件の本文を取り出す。
+ * 投稿が無い・本文が空なら undefined
+ */
 export async function requirementText(
-  chat: Pick<Chat, "selfId" | "readMessages">,
-  threadId: string,
+  chat: Pick<Chat, "readMessage">,
+  chatConfig: Pick<ChatConfig, "channels">,
+  messageId: string,
 ): Promise<string | undefined> {
-  const botId = await chat.selfId();
-  const thread = await chat.readMessages(threadId);
-  return requirementTextFrom(thread, botId);
+  const posted = await chat.readMessage(
+    chatConfig.channels.requirements,
+    messageId,
+  );
+  if (posted === undefined || posted.text.trim() === "") return undefined;
+  return posted.text;
+}
+
+/**
+ * スレッドのやり取りから、中身が空の書き込みを除く。
+ * Discord は投稿からスレッドを作ると、先頭に中身が空の「スレッドの元の書き込み」を入れる
+ */
+export function threadConversation(
+  thread: readonly ChatMessage[],
+): ChatMessage[] {
+  return thread.filter((m) => m.text.trim() !== "");
 }
