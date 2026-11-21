@@ -238,13 +238,58 @@ export function codeBlock(s: string): string {
   return `${fence}\n${s}\n${fence}`;
 }
 
+/** 中身（括弧の中）で絞らないと、道具全体を許すことになる道具 */
+const SCOPED_TOOLS = new Set([
+  "Bash",
+  "PowerShell",
+  "Edit",
+  "Write",
+  "MultiEdit",
+  "NotebookEdit",
+  "Read",
+  "WebFetch",
+]);
+
+/** 規則として受け付ける道具（Claude Code の道具の名前。mcp__* は別に受け付ける） */
+const KNOWN_TOOLS = new Set([
+  ...SCOPED_TOOLS,
+  "Glob",
+  "Grep",
+  "LS",
+  "WebSearch",
+  "NotebookRead",
+  "Task",
+  "TodoWrite",
+]);
+
+/** 中身で絞るべき道具なのに、中身（括弧）が無い・空の規則か */
+function isUnscoped(rule: string): boolean {
+  const { tool, spec } = parseRule(rule);
+  return SCOPED_TOOLS.has(tool) && (spec === undefined || spec.trim() === "");
+}
+
+/** 知っている道具の規則か。中身で絞るべき道具は、括弧つき（中身あり）だけを規則とみなす */
+export function isKnownRule(rule: string): boolean {
+  const { tool } = parseRule(rule);
+  const known = KNOWN_TOOLS.has(tool) || /^mcp__[\w-]+$/.test(tool);
+  return known && !isUnscoped(rule);
+}
+
 /**
  * ✅ で足す案にしてよい規則か。
- * バッククォート・改行・`$(` を含む規則は、表示で読み違えやすく、コマンドの置換も含みうるので、✅ の案にしない
- * （人がスレッドに規則を書いたときだけ足す）
+ * - バッククォート・改行・`$(` を含む規則は、表示で読み違えやすく、コマンドの置換も含みうるので、✅ の案にしない
+ * - 中身の無い広い規則（`Bash`・`WebFetch` など）は道具全体を許すので、✅ の案にしない
+ * （どちらも、人がスレッドに規則を書いたときだけ足す）
  */
 export function isProposable(rule: string): boolean {
-  return !/[`\r\n]|\$\(/.test(rule);
+  return !/[`\r\n]|\$\(/.test(rule) && !isUnscoped(rule);
+}
+
+/** ✅ の案にしない理由 */
+function unproposableReason(rule: string): string {
+  return isUnscoped(rule)
+    ? "中身で絞っておらず、道具全体を許すことになります"
+    : "バッククォート・改行・`$(` を含みます";
 }
 
 /** 規則の案の一覧の行。✅ の案にしない規則は、そのまま見える形（コードのブロック）で示す */
@@ -252,7 +297,7 @@ function ruleLines(rules: readonly string[]): string[] {
   return rules.map((r) =>
     isProposable(r)
       ? `- ${code(r)}`
-      : `- 次の規則（バッククォート・改行・\`$(\` を含むため、${ALLOW_MARK} では足しません）:\n${codeBlock(r)}`,
+      : `- 次の規則（${unproposableReason(r)}。${ALLOW_MARK} では足しません）:\n${codeBlock(r)}`,
   );
 }
 
@@ -336,7 +381,7 @@ export function noChatComment(
     ...record.rules.map((r) =>
       isProposable(r)
         ? `- ${code(r)}`
-        : `- 次の規則（バッククォート・改行・\`$(\` を含みます。中身をよく確かめてください）:\n${codeBlock(r)}`,
+        : `- 次の規則（${unproposableReason(r)}。中身をよく確かめてください）:\n${codeBlock(r)}`,
     ),
     ...(broad.length > 0
       ? ["", "広く許可するときの案:", ...broad.map((r) => `- ${code(r)}`)]
@@ -346,7 +391,10 @@ export function noChatComment(
   ].join("\n");
 }
 
-/** 人が書いた書き込みから規則を取り出す（1 行に 1 つ。箇条書きの印・` は外す） */
+/**
+ * 人が書いた書き込みから規則を取り出す（1 行に 1 つ。箇条書きの印・` は外す）。
+ * 知っている道具の規則だけを受け付ける（「OK」などの返事や、括弧の無い `Bash` は規則にしない）
+ */
 export function rulesInText(text: string): string[] {
   const rules: string[] = [];
   for (const raw of text.split(/\r?\n/)) {
@@ -355,7 +403,11 @@ export function rulesInText(text: string): string[] {
       .replace(/^[-*・]\s+/, "")
       .replace(/^`+|`+$/g, "")
       .trim();
-    if (/^[A-Za-z][\w-]*(?:\(.+\))?$/s.test(line) && !rules.includes(line)) {
+    if (
+      /^[A-Za-z][\w-]*(?:\(.+\))?$/s.test(line) &&
+      isKnownRule(line) &&
+      !rules.includes(line)
+    ) {
       rules.push(line);
     }
   }

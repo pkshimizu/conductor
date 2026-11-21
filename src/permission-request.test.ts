@@ -133,6 +133,27 @@ describe("人が書いた規則", () => {
     ).toEqual(["Bash(npm install *)", "WebSearch"]);
   });
 
+  it("OK などの返事は規則にしない", () => {
+    expect(rulesInText("OK")).toEqual([]);
+    expect(rulesInText("yes\nthanks\nLGTM")).toEqual([]);
+    expect(rulesInText("Foo(bar)")).toEqual([]);
+  });
+
+  it("Bash・WebFetch など中身で絞るべき道具は、括弧つきだけを規則にする", () => {
+    expect(rulesInText("Bash\nWebFetch\nEdit\nWrite\nPowerShell")).toEqual([]);
+    expect(rulesInText("Bash()")).toEqual([]);
+    expect(
+      rulesInText(
+        "WebFetch(domain:example.com)\nEdit(./docs/**)\nGrep\nmcp__github__get_issue",
+      ),
+    ).toEqual([
+      "WebFetch(domain:example.com)",
+      "Edit(./docs/**)",
+      "Grep",
+      "mcp__github__get_issue",
+    ]);
+  });
+
   it("スレッドの名前は 90 文字までにする", () => {
     const name = permissionThreadName(1, "あ".repeat(200));
     expect(name).toHaveLength(90);
@@ -329,6 +350,46 @@ describe("読み違えやすい規則", () => {
     );
     expect(result.status).toBe("granted");
     expect(parts.saved[0]?.roles.implementer.allow).toEqual(["Bash(cat *)"]);
+  });
+});
+
+describe("中身の無い広い規則", () => {
+  it("中身の無い Bash・WebFetch・Edit は ✅ の案にしない", () => {
+    for (const rule of ["Bash", "PowerShell", "Edit", "Write", "WebFetch"]) {
+      expect(isProposable(rule)).toBe(false);
+    }
+    expect(isProposable("Bash()")).toBe(false);
+    expect(isProposable("WebSearch")).toBe(true);
+    expect(isProposable("WebFetch(domain:example.com)")).toBe(true);
+  });
+
+  it("command の無い Bash の拒否に ✅ が付いても足さない。OK と書いても足さない", async () => {
+    const rule = ruleOfDenial({ tool: "Bash", input: {} }, "/repo");
+    expect(rule).toBe("Bash");
+    const parts = setup();
+    const { headId, threadId } = await asked(parts, rule);
+    parts.chat.addReaction(QUESTIONS, headId, "✅", ALLOWED);
+    parts.chat.addMessage(threadId, { authorId: ALLOWED, text: "OK" });
+
+    const result = await followPermissionRequest(
+      parts.deps,
+      (await parts.store.getPermissionRequest(KEY))!,
+    );
+    expect(result.status).toBe("waiting");
+    expect(parts.saved).toEqual([]);
+    expect(parts.config.roles.implementer.allow).not.toContain("Bash");
+    expect(
+      (parts.chat.messages.get(threadId) ?? []).map((m) => m.text),
+    ).toContain(RULE_HINT);
+  });
+
+  it("URL の読めない WebFetch の拒否は ✅ の案にしない", () => {
+    const rule = ruleOfDenial(
+      { tool: "WebFetch", input: { url: "not a url" } },
+      "/repo",
+    );
+    expect(rule).toBe("WebFetch");
+    expect(isProposable(rule)).toBe(false);
   });
 });
 

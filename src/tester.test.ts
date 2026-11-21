@@ -3,10 +3,12 @@ import type { RoleRun } from "./claude.js";
 import { parseConfig } from "./config.js";
 import { matchesAny } from "./git.js";
 import { listAcceptance } from "./intake.js";
+import { permissionDenials } from "./permission-request.js";
 import { MemoryStore } from "./store.js";
 import {
   runTester,
   testerAllow,
+  testerDeny,
   testerPrompt,
   type TesterDeps,
   type TesterOutput,
@@ -198,6 +200,16 @@ describe("testerAllow / testerPrompt", () => {
     expect(allow).toContain("Edit(./e2e/**)");
     expect(allow).toContain("Edit(./supabase/seed.sql)");
     expect(allow.some((a) => a.startsWith("Edit(./src"))).toBe(false);
+  });
+
+  it(".conductor/ の書き換えは拒否リストに入り、許可を聞かない", () => {
+    expect(testerDeny()).toContain("Edit(./.conductor/**)");
+    const asked = permissionDenials(
+      [{ tool: "Edit", input: { file_path: "/repo/.conductor/config.yaml" } }],
+      testerDeny(),
+      "/repo",
+    );
+    expect(asked.rules).toEqual([]);
   });
 
   it("依頼文に AC・書いてよいファイル・撮影先・前回の問題が入る", () => {

@@ -125,9 +125,12 @@ export function testerAllow(config: Config): string[] {
   ];
 }
 
-/** テスト役の拒否リスト（いまは無い。claude には渡さない） */
+/**
+ * テスト役の拒否リスト。conductor 自身の設定・役の指示（.conductor/）は書き換えさせない。
+ * claude にも渡し、拒否されても許可を聞かない（差し戻しと同じく扱う）
+ */
 export function testerDeny(): string[] {
-  return [];
+  return [`Edit(./${CONDUCTOR_DIR}/**)`];
 }
 
 export function testerPrompt(
@@ -313,6 +316,7 @@ export async function runTester(
       prompt: testerPrompt(config, issue, acs, feedback),
       schema: testerOutputSchema,
       allow: testerAllow(config),
+      deny: testerDeny(),
       ...(deps.model ? { model: deps.model } : {}),
     });
     const out = result.output;
