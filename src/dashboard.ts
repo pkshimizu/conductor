@@ -19,8 +19,27 @@ export type {
   DashboardData,
 } from "./dashboard-data.js";
 
+/** ダッシュボードで扱う Issue。open が無ければ開いているものとして扱う */
+export interface DashboardIssue extends LoopIssue {
+  open?: boolean;
+}
+
 export interface DashboardBoard {
-  issuesByColumn(): Promise<Map<string, LoopIssue[]>>;
+  /** includeClosed なら閉じた Issue も含める（列ごとの件数で Done も数えるため） */
+  issuesByColumn(options?: {
+    includeClosed?: boolean;
+  }): Promise<Map<string, DashboardIssue[]>>;
+}
+
+const isOpen = (issue: DashboardIssue): boolean => issue.open !== false;
+
+/** 開いている Issue だけの列の一覧（人の判断待ち・処理中は閉じた Issue を出さない） */
+function openOnly(
+  byColumn: Map<string, DashboardIssue[]>,
+): Map<string, DashboardIssue[]> {
+  return new Map(
+    [...byColumn].map(([column, list]) => [column, list.filter(isOpen)]),
+  );
 }
 
 export interface DashboardDeps {
@@ -112,7 +131,8 @@ export async function loadDashboard(
 ): Promise<DashboardData> {
   const { config, status, activity } = deps;
   const { columns, repo } = config.github;
-  const byColumn = await deps.board.issuesByColumn();
+  const byColumn = await deps.board.issuesByColumn({ includeClosed: true });
+  const openByColumn = openOnly(byColumn);
   const order = [
     columns.ready,
     columns.testing,
@@ -130,7 +150,7 @@ export async function loadDashboard(
       rejections: config.limits.rejections,
       objections: config.limits.objections,
     },
-    blocked: await blockedIssues(deps, byColumn),
+    blocked: await blockedIssues(deps, openByColumn),
     counts: order.map((column) => ({
       column,
       count: byColumn.get(column)?.length ?? 0,
@@ -142,7 +162,7 @@ export async function loadDashboard(
   if (activity.nextCheckAt !== undefined) {
     data.nextCheckAt = activity.nextCheckAt;
   }
-  const active = await activeIssue(deps, byColumn);
+  const active = await activeIssue(deps, openByColumn);
   if (active !== undefined) data.active = active;
   return data;
 }

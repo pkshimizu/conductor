@@ -117,4 +117,35 @@ describe("loadDashboard", () => {
       { column: "Blocked", count: 3 },
     ]);
   });
+
+  it("閉じた Issue も含めて取り、件数には数えるが、判断待ちと処理中には出さない", async () => {
+    const options: unknown[] = [];
+    const item = (number: number, open: boolean) => ({
+      ...issue(number),
+      open,
+    });
+    const data = await loadDashboard({
+      config,
+      store: new MemoryStore(clock),
+      board: {
+        issuesByColumn: (o) => {
+          options.push(o);
+          return Promise.resolve(
+            new Map([
+              ["Done", [item(1, false), item(2, false)]],
+              ["Blocked", [item(3, false), item(4, true)]],
+              ["Testing", [item(5, false), item(6, true)]],
+            ]),
+          );
+        },
+      },
+      status: "idle",
+      activity: {},
+    });
+    expect(options).toEqual([{ includeClosed: true }]);
+    expect(data.counts.find((c) => c.column === "Done")?.count).toBe(2);
+    expect(data.counts.find((c) => c.column === "Blocked")?.count).toBe(2);
+    expect(data.blocked.map((b) => b.number)).toEqual([4]);
+    expect(data.active?.number).toBe(6);
+  });
 });

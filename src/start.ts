@@ -474,8 +474,9 @@ export async function start(
     try {
       const buildDeps = async (next: Config): Promise<LoopDeps> => {
         const deps = await buildLoopDeps(repoDir, next, store, log);
+        // ダッシュボードは閉じた Issue も数えるので、引数（includeClosed）を受ける GitHub をそのまま渡す
         const d = dashboardRefresher(
-          { config: next, store, board: deps.board },
+          { config: next, store, board: githubFromConfig(next) },
           (data) => admin.setDashboard(data),
           log,
         );
