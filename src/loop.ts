@@ -219,12 +219,41 @@ export const ROLE_LABELS: Readonly<Record<ActiveRole, string>> = {
 
 /**
  * いま動いている段階と、その中断の signal を持つ（管理画面からの中断を受け付ける）。
- * 段階ごとに begin で signal を作り、終わったら end で外す
+ * 段階ごとに begin で signal を作り、終わったら end で外す。
+ * 段階が動いていない処理中の Issue（CI の結果待ちの間など）への中断は予約しておき、
+ * 次の確認で常駐ループが Blocked に移す
  */
 export class StepAborter {
   private current:
     | { issue: number; controller: AbortController; role?: ActiveRole }
     | undefined;
+  /** 直近の確認で処理中だった Issue（Testing・Implementing・Reviewing 列） */
+  private working = new Set<number>();
+  /** 段階の外で中断を頼まれた Issue */
+  private pending = new Set<number>();
+
+  /** 直近の確認で処理中だった Issue を覚える。処理中でなくなった Issue の中断の予約は捨てる */
+  setWorking(issues: readonly number[]): void {
+    this.working = new Set(issues);
+    for (const n of this.pending) {
+      if (!this.working.has(n)) this.pending.delete(n);
+    }
+  }
+
+  /** 段階を終えた Issue を処理中として覚える（Ready から始めた Issue は次の確認まで列を読み直さないため） */
+  noteWorking(issue: number): void {
+    this.working.add(issue);
+  }
+
+  /** 中断の予約があれば取り出す。予約があったら true */
+  takePending(issue: number): boolean {
+    return this.pending.delete(issue);
+  }
+
+  /** 中断を予約する（次の確認で、まだ処理中なら Blocked に移す） */
+  reserve(issue: number): void {
+    this.pending.add(issue);
+  }
 
   /** Issue の段階を始める。返した controller の signal を段階の関数に渡す */
   begin(issue: number): AbortController {
@@ -254,11 +283,18 @@ export class StepAborter {
     return this.current?.issue;
   }
 
-  /** issue の段階が動いていればすぐ中断する。中断したら true */
+  /**
+   * issue の段階が動いていればすぐ中断する。段階の合間の処理中の Issue なら中断を予約する。
+   * 受け付けたら true（処理中でなければ false）
+   */
   abort(issue: number): boolean {
     const current = this.current;
-    if (current?.issue !== issue) return false;
-    current.controller.abort(abortError("管理画面から中断しました"));
+    if (current?.issue === issue) {
+      current.controller.abort(abortError("管理画面から中断しました"));
+      return true;
+    }
+    if (!this.working.has(issue)) return false;
+    this.pending.add(issue);
     return true;
   }
 }
@@ -483,13 +519,22 @@ async function attempt(
   }
   const role = state.steps.roleOf(controller);
   state.steps.end(controller);
-  if (controller.signal.aborted) {
-    await blockAborted(deps, state, n, role, error);
+  if (error === undefined) {
+    // 中断されても最後まで進んだ段階（マージなど）は成功として扱う
+    state.failures.delete(n);
+    state.steps.noteWorking(n);
+    deps.log(`#${n}: ${result?.status ?? ""}`);
+    if (controller.signal.aborted) {
+      // まだ処理中なら次の確認で Blocked に移す（マージして Done に移ったら予約は捨てる）
+      state.steps.reserve(n);
+      deps.log(
+        `#${n}: 中断の前に段階が終わりました。次の確認でまだ処理中なら Blocked に移します`,
+      );
+    }
     return;
   }
-  if (error === undefined) {
-    state.failures.delete(n);
-    deps.log(`#${n}: ${result?.status ?? ""}`);
+  if (controller.signal.aborted) {
+    await blockAborted(deps, state, n, role, error);
     return;
   }
   const message = errorMessage(error.e);
@@ -696,6 +741,16 @@ export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   }
   const isApproving = (n: number) =>
     records.get(n)?.checkpoint?.stage === "approving";
+
+  // 段階の合間に中断を頼まれた Issue は、段階を始めずに Blocked に移す（次の Ready は次の確認で始める）
+  state.steps.setWorking(working.map((w) => w.issue.number));
+  const aborted = working.filter((w) =>
+    state.steps.takePending(w.issue.number),
+  );
+  for (const { issue } of aborted) {
+    await blockAborted(deps, state, issue.number, undefined, undefined);
+  }
+  if (aborted.length > 0) return;
 
   // 承認待ちは作業中に数えず、毎回コメントだけを確かめる
   for (const { issue } of working.filter((w) => isApproving(w.issue.number))) {

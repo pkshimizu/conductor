@@ -31,7 +31,9 @@ export interface Supervisor {
   shutdown(): Promise<void>;
   /**
    * 処理中の Issue の作業を中断する。いま動いている段階の signal をすぐ abort し、受け付けたら resolve（役が終わるのは待たない）。
-   * 中断した段階が終わったら、常駐ループが Issue を Blocked に移す。その Issue が処理中でなければ reject
+   * 中断した段階が終わったら、常駐ループが Issue を Blocked に移す。
+   * 段階の合間（CI の結果待ちの間など）なら中断を予約し、次の確認で段階を始めずに Blocked に移す。
+   * その Issue が処理中でなければ reject
    */
   abort(issue: number): Promise<void>;
 }

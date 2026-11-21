@@ -541,6 +541,53 @@ describe("管理画面からの中断（StepAborter）", () => {
     expect(t.logs.some((l) => l.includes("通信に失敗"))).toBe(true);
   });
 
+  it("中断されても段階が最後まで進んだ（マージした）ら、Blocked に移さず中断のコメントも付けない", async () => {
+    const t = setup({ Reviewing: [3] });
+    await t.setStage(3, "merging");
+    const state = newLoopState();
+    t.results.merge = () => {
+      expect(state.steps.abort(3)).toBe(true);
+      return Promise.resolve({ status: "merged" });
+    };
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["merge #3"]);
+    expect(t.moves.filter(([, c]) => c === "Blocked")).toEqual([]);
+    expect(t.comments.filter((c) => c.body.includes("中断"))).toEqual([]);
+    expect(t.logs).toContain("#3: merged");
+    expect(state.failures.size).toBe(0);
+  });
+
+  it("段階の合間に中断を頼まれたら、次の確認で段階を始めずに Blocked に移す", async () => {
+    const t = setup({ Reviewing: [3], Ready: [5] });
+    await t.setStage(3, "ci");
+    const state = newLoopState();
+    t.results.checkCi = () => Promise.resolve({ status: "pending" });
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["checkCi #3"]);
+    // CI の結果待ちの間（段階は動いていない）に中断する
+    expect(state.steps.running()).toBeUndefined();
+    expect(state.steps.abort(3)).toBe(true);
+    // 処理中でない Issue は受け付けない
+    expect(state.steps.abort(5)).toBe(false);
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["checkCi #3"]);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    expect(t.comments).toHaveLength(1);
+    expect(t.comments[0]?.mention).toBe(true);
+    expect(t.comments[0]?.body).toContain("管理画面から中断しました。");
+    const record = await t.store.get({ repo: REPO, issue: 3 });
+    expect(record?.blockedReason).toBe("管理画面から中断しました。");
+  });
+
+  it("中断の予約は、その Issue が処理中でなくなったら捨てる", () => {
+    const state = newLoopState();
+    state.steps.setWorking([3]);
+    expect(state.steps.abort(3)).toBe(true);
+    state.steps.setWorking([]);
+    expect(state.steps.takePending(3)).toBe(false);
+    expect(state.steps.abort(3)).toBe(false);
+  });
+
   it("中断のほかに失敗していたら、その内容をログに出す", async () => {
     const t = setup({ Testing: [3] });
     const state = newLoopState();
