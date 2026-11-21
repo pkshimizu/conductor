@@ -69,11 +69,17 @@ export async function prerequisiteState(
   return { open, missing };
 }
 
-/** 同じ確認の中で、Issue ごとに1回だけ問い合わせる statusOf を作る */
+/** 1回の確認の中で問い合わせた Issue の状態をためる入れ物（見つからない Issue は undefined） */
+export type StatusCache = Map<number, WorkIssueStatus | undefined>;
+
+/**
+ * 同じ確認の中で、Issue ごとに1回だけ問い合わせる statusOf を作る。
+ * 複数の呼び出しで問い合わせ結果を共有するときは、同じ statuses を渡す
+ */
 export function cachedStatusOf(
   board: Pick<ProgressBoard, "workIssueStatus">,
+  statuses: StatusCache = new Map(),
 ): (issue: number) => Promise<WorkIssueStatus | undefined> {
-  const statuses = new Map<number, WorkIssueStatus | undefined>();
   return async (n) => {
     if (statuses.has(n)) return statuses.get(n);
     const s = await board.workIssueStatus(n);

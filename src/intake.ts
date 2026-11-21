@@ -144,7 +144,10 @@ export function missingPrerequisiteProblem(issue: number): string {
  * - 「先に済ませる Issue」にリポジトリに無い番号があれば、書き漏れと同じく Blocked に移す
  * - 「先に済ませる Issue」にまだ開いている Issue があれば、動かさずコメントもせずに待つ
  * - そろっていればテスト役の列へ移す
- * statusOf を渡せば、同じ確認の中で Issue ごとの問い合わせを1回にできる
+ *
+ * statusOf の既定値は、この1件だけを確かめるとき用（呼び出しのたびに問い合わせ結果を捨てる）。
+ * Ready の複数の Issue を1回の確認で続けて確かめるときは、呼び出し元が
+ * cachedStatusOf(board, cache) の cache を共有して渡すこと（src/loop.ts の tick と src/start.ts）
  */
 export async function pickUp(
   deps: IntakeDeps,

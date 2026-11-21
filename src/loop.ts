@@ -11,6 +11,7 @@ import type { Chat } from "./chat.js";
 import type { Config } from "./config.js";
 import { abortError, isAbortError } from "./exec.js";
 import { type PartialWork, partialWorkOf } from "./partial-work.js";
+import type { StatusCache } from "./progress.js";
 import { pendingFindings } from "./rejection.js";
 import { receiveRequirements } from "./requirements.js";
 import type { RespecDeps } from "./respec.js";
@@ -62,9 +63,14 @@ export interface LoopDeps {
   board: LoopBoard;
   /**
    * 入口確認。そろっていればテスト役の列へ移す。
-   * 「先に済ませる Issue」を待つ（Ready に残す）なら、まだ開いている番号を waiting で返す
+   * 「先に済ませる Issue」を待つ（Ready に残す）なら、まだ開いている番号を waiting で返す。
+   * cache は1回の確認（tick）の中で共有する問い合わせ結果の入れ物。
+   * 同じ番号を GitHub に2回問い合わせないよう、実装はこれを使う
    */
-  pickUp(issue: LoopIssue): Promise<{ accepted: boolean; waiting?: number[] }>;
+  pickUp(
+    issue: LoopIssue,
+    cache: StatusCache,
+  ): Promise<{ accepted: boolean; waiting?: number[] }>;
   test(issue: LoopIssue, ctx?: StepContext): Promise<StepResult>;
   implement(
     issue: LoopIssue,
@@ -781,10 +787,12 @@ export async function tick(deps: LoopDeps, state: LoopState): Promise<void> {
   const readies = inColumn(columns.ready);
   if (readies.length === 0) return;
   const waits: { issue: number; waiting: number[] }[] = [];
+  // この確認の中では、先に済ませる Issue を番号ごとに1回だけ問い合わせる
+  const prerequisites: StatusCache = new Map();
   for (const { issue: ready } of readies) {
     const outcome: { waiting?: number[] } = {};
     await attempt(deps, state, ready, async (ctx) => {
-      const r = await deps.pickUp(ready);
+      const r = await deps.pickUp(ready, prerequisites);
       if (r.waiting !== undefined) {
         outcome.waiting = r.waiting;
         return { status: PREREQUISITES_WAITING };

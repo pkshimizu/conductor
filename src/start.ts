@@ -32,7 +32,7 @@ import { Git } from "./git.js";
 import { type GitHub, githubFromConfig } from "./github.js";
 import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
-import { checkProgress } from "./progress.js";
+import { cachedStatusOf, checkProgress } from "./progress.js";
 import type { RespecDeps } from "./respec.js";
 import type { LoopActivity, LoopDeps, StepContext } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
@@ -212,7 +212,12 @@ export async function buildLoopDeps(
     ...(decompose === undefined ? {} : { decompose }),
     ...(progress === undefined ? {} : { progress }),
     log,
-    pickUp: (issue) => pickUp({ config, store, board: github, log }, issue),
+    pickUp: (issue, cache) =>
+      pickUp(
+        { config, store, board: github, log },
+        issue,
+        cachedStatusOf(github, cache),
+      ),
     test: (issue, ctx) =>
       runTester(
         {
