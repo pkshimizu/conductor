@@ -25,6 +25,11 @@ import type { Git } from "./git.js";
 import type { CiResult } from "./github.js";
 import { outputTail } from "./implementer.js";
 import { listAcceptance } from "./intake.js";
+import {
+  type Denial,
+  permissionDenials,
+  recordPermissionRequest,
+} from "./permission-request.js";
 import { recordRejection } from "./rejection.js";
 import type { IssueKey, Store } from "./store.js";
 import { screenshotPath, testBranch, type TesterIssue } from "./tester.js";
@@ -90,6 +95,8 @@ export type ReviewerResult =
       blocked: boolean;
     }
   | { status: "objection"; objections: number }
+  /** 許可リストにない操作を拒否されたので、許可を待つ（rules は足す規則の案） */
+  | { status: "waiting_permission"; rules: string[] }
   | { status: "waiting" };
 
 /** レビュー役は読むだけ。git も読む操作だけを許す */
@@ -316,6 +323,11 @@ export async function runReviewer(
   if (record?.pr === undefined) return { status: "waiting" };
   const pr = record.pr;
   const branch = record.branch ?? testBranch(issue.number);
+  // 許可の確認を待つ間は役を起動しない
+  const permission = await store.getPermissionRequest(key);
+  if (permission !== undefined) {
+    return { status: "waiting_permission", rules: permission.rules };
+  }
 
   // 人の承認待ちなら、レビューし直さずに PR のコメントだけを見る
   if (record.checkpoint?.stage === "approving") {
@@ -343,6 +355,7 @@ export async function runReviewer(
 
   const prompt = reviewerPrompt(issue, pr, diff, screenshots);
   let reviews: PerspectiveReview[];
+  const denials: Denial[] = [];
   try {
     reviews = await mapLimit(
       reviewerSystemPrompts(deps.perspectives),
@@ -358,6 +371,7 @@ export async function runReviewer(
           deny: reviewerDeny(),
           ...(deps.model ? { model: deps.model } : {}),
         });
+        denials.push(...result.denials);
         return { name, output: result.output };
       },
     );
@@ -387,6 +401,17 @@ export async function runReviewer(
       ].join("\n"),
     });
     return { status: "objection", objections };
+  }
+
+  // 許可リストにない操作を拒否されたら（deny に当てはまるものは除く）、差し戻しにせず許可を確かめる
+  const asked = permissionDenials(denials, reviewerDeny(), deps.repoDir);
+  if (asked.rules.length > 0) {
+    await recordPermissionRequest(store, key, {
+      role: "reviewer",
+      title: issue.title,
+      ...asked,
+    });
+    return { status: "waiting_permission", rules: asked.rules };
   }
 
   if (out.verdict === "reject") {

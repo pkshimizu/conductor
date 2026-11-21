@@ -8,6 +8,7 @@ import {
   followBlockedThread,
   followBlockedThreads,
   noteBlocked,
+  releaseUnblocked,
 } from "./blocked-thread.js";
 import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
@@ -319,6 +320,44 @@ describe("followBlockedThread（仕様の作り直し）", () => {
     expect(t.moves).toEqual([[7, "Ready"]]);
     expect(t.chat.threads.get(threadId)?.archived).toBe(true);
     expect(await t.store.getBlockedThread(KEY)).toBeUndefined();
+  });
+});
+
+describe("releaseUnblocked", () => {
+  it("止まった理由が残り、Blocked の列に無い Issue だけ回数を 0 に戻して理由を消す", async () => {
+    const store = new MemoryStore();
+    const key = (issue: number) => ({ repo: REPO, issue });
+    await store.update(key(1), {
+      rejections: 3,
+      objections: 1,
+      blockedReason: "理由1",
+    });
+    await store.update(key(2), { rejections: 3, blockedReason: "理由2" });
+    await store.update(key(3), { rejections: 2 });
+    await store.update(
+      { repo: "other/app", issue: 4 },
+      {
+        rejections: 3,
+        blockedReason: "別のリポジトリ",
+      },
+    );
+
+    const released = await releaseUnblocked(store, REPO, new Set([2]));
+
+    expect(released).toEqual([1]);
+    expect(await store.get(key(1))).toMatchObject({
+      rejections: 0,
+      objections: 0,
+    });
+    expect((await store.get(key(1)))?.blockedReason).toBeUndefined();
+    expect(await store.get(key(2))).toMatchObject({
+      rejections: 3,
+      blockedReason: "理由2",
+    });
+    expect((await store.get(key(3)))?.rejections).toBe(2);
+    expect((await store.get({ repo: "other/app", issue: 4 }))?.rejections).toBe(
+      3,
+    );
   });
 });
 
