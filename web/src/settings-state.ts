@@ -23,8 +23,11 @@ export interface SettingsState {
   saved?: { number: number; url: string };
   /** 保存を頼んだのに失敗した */
   failed?: true;
-  /** 指示ファイルのタブで出している役とファイル（省略時は最初の役・最初のファイル） */
-  prompt?: { role: Role; file?: string };
+  /**
+   * 指示ファイルのタブで出している役とファイル（省略時は最初の役・最初のファイル）。
+   * source が true なら原文、無ければ整形して見せる
+   */
+  prompt?: { role: Role; file?: string; source?: true };
   /** リストの追加欄に入力中の文字（"protected"・"roles.<役>.allow"・"chat.allowed_users" ごと） */
   drafts?: Readonly<Record<string, string>>;
 }
