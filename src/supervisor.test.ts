@@ -66,6 +66,24 @@ function world() {
   return { sleeps, built, buildDeps, waitSleep: () => nextSleep };
 }
 
+describe("startSupervisor の中断", () => {
+  it("処理中でない Issue の中断は reject する", async () => {
+    const w = world();
+    const first = w.waitSleep();
+    const s = startSupervisor({
+      repoDir: "unused",
+      config: config(30),
+      buildDeps: w.buildDeps,
+      onStatus: () => {},
+      log: () => {},
+    });
+    await first;
+    await expect(s.abort(12)).rejects.toThrow(/処理中ではない/);
+    expect(s.status()).toBe("idle");
+    await s.shutdown();
+  });
+});
+
 describe("startSupervisor", () => {
   it("止めると stopping を経て stopped になり、2回目の停止は何もしない", async () => {
     const w = world();

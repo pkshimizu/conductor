@@ -8,6 +8,7 @@ import type { CSSProperties, MouseEvent, ReactElement } from "react";
 import type {
   DashboardBlocked,
   DashboardData,
+  DashboardRole,
 } from "../../src/dashboard-data.js";
 import {
   formatAgo,
@@ -31,7 +32,25 @@ export interface DashboardProps {
   /** 今の時刻。経過時間と次の確認までの秒数はこれから計算する */
   now: Date;
   onNavigate?: (path: string) => void;
+  /** 処理中の Issue の「この作業を中断」（中断のダイアログを出す） */
+  onAbort?: (issue: number, role: DashboardRole | undefined) => void;
 }
+
+const ABORT_BUTTON: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  height: 32,
+  padding: "0 12px",
+  borderRadius: 7,
+  border: "1px solid var(--red-bd)",
+  background: "var(--panel)",
+  color: "var(--red-fg)",
+  font: "inherit",
+  fontSize: 13,
+  fontWeight: 500,
+  cursor: "pointer",
+};
 
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
 const NONE = "—";
@@ -429,6 +448,7 @@ function ActiveSection(props: {
   t: Messages;
   now: Date;
   onNavigate: ((path: string) => void) | undefined;
+  onAbort: DashboardProps["onAbort"];
 }): ReactElement {
   const { data, lang, t, now } = props;
   const { active } = data;
@@ -577,12 +597,41 @@ function ActiveSection(props: {
                 {active.branch ?? NONE}
               </span>
             </span>
-            <IssueLinks
-              repo={data.repo}
-              issue={active.number}
-              t={t}
-              onNavigate={props.onNavigate}
-            />
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <IssueLinks
+                repo={data.repo}
+                issue={active.number}
+                t={t}
+                onNavigate={props.onNavigate}
+              />
+              <button
+                type="button"
+                onClick={() => props.onAbort?.(active.number, active.role)}
+                style={ABORT_BUTTON}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
+                  <path d="M9 6v12" />
+                  <path d="M15 6v12" />
+                </svg>
+                {t.abort}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -748,7 +797,7 @@ function CountsSection(props: {
 }
 
 export function Dashboard(props: DashboardProps): ReactElement {
-  const { data, lang, now, onNavigate } = props;
+  const { data, lang, now, onNavigate, onAbort } = props;
   const t = MESSAGES[lang];
   return (
     <div style={PAGE}>
@@ -765,6 +814,7 @@ export function Dashboard(props: DashboardProps): ReactElement {
           t={t}
           now={now}
           onNavigate={onNavigate}
+          onAbort={onAbort}
         />
         <StatusSection data={data} lang={lang} t={t} now={now} />
       </div>

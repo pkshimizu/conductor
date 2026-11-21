@@ -79,6 +79,57 @@ const RUN = {
   allow: ["Read", "Bash(npm test)"],
 };
 
+describe("中断", () => {
+  it("signal を exec に渡し、中断されたら利用上限の待ちにせず AbortError で reject する", async () => {
+    const controller = new AbortController();
+    const seen: (AbortSignal | undefined)[] = [];
+    const deps: ClaudeDeps = {
+      exec: (_args, options) => {
+        seen.push(options.signal);
+        controller.abort();
+        // 中断で終わった claude が上限の文を出しても、やり直さない
+        return Promise.resolve({
+          code: 1,
+          stdout: "",
+          stderr: "Claude AI usage limit reached|1763190000",
+        });
+      },
+      sleep: () => Promise.reject(new Error("待たないはず")),
+      now: () => new Date(),
+    };
+    const err = await runRole(
+      { ...RUN, signal: controller.signal },
+      deps,
+    ).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "AbortError" });
+    expect(seen).toEqual([controller.signal]);
+  });
+
+  it("利用上限で待っている間に中断されたら、待ちをやめて AbortError で reject する", async () => {
+    const controller = new AbortController();
+    let execs = 0;
+    const deps: ClaudeDeps = {
+      exec: () => {
+        execs++;
+        return Promise.resolve({
+          code: 1,
+          stdout: "",
+          stderr: "Claude AI usage limit reached|1763190000",
+        });
+      },
+      sleep: () => {
+        controller.abort();
+        return new Promise(() => {});
+      },
+      now: () => new Date("2025-11-15T00:00:00Z"),
+    };
+    await expect(
+      runRole({ ...RUN, signal: controller.signal }, deps),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(execs).toBe(1);
+  });
+});
+
 describe("AC1: 決まりと依頼文の渡し方", () => {
   it("決まりは --append-system-prompt-file、依頼文は標準入力、毎回新しいセッション", async () => {
     const { deps, calls } = fakeDeps([

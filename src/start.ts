@@ -22,14 +22,14 @@ import {
 } from "./dashboard.js";
 import { runDecomposer } from "./decomposer.js";
 import { DiscordChat } from "./discord.js";
-import { shellExec } from "./exec.js";
+import { type Shell, shellExec } from "./exec.js";
 import { Git } from "./git.js";
 import { type GitHub, githubFromConfig } from "./github.js";
 import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
 import { checkProgress } from "./progress.js";
 import type { RespecDeps } from "./respec.js";
-import type { LoopActivity, LoopDeps } from "./loop.js";
+import type { LoopActivity, LoopDeps, StepContext } from "./loop.js";
 import { checkCi, runReviewer } from "./reviewer.js";
 import { SqliteStore } from "./sqlite-store.js";
 import { checkSpecApproval } from "./spec-approval.js";
@@ -94,10 +94,21 @@ export async function buildLoopDeps(
   );
   const perspectives = await loadRoleDocs(repoDir, "reviewer");
   const base = { config, repoDir, git, board: github, store };
-  const reviewerDeps = {
+  // 段階の中断の signal を、役（claude -p）と設定のコマンドにつなぐ
+  const runWith = (ctx: StepContext | undefined): typeof run =>
+    ctx === undefined
+      ? run
+      : <T extends { systemPrompt: string }>(r: T) =>
+          run({ ...r, signal: ctx.signal });
+  const shellWith = (ctx: StepContext | undefined): Shell =>
+    ctx === undefined
+      ? shellExec
+      : (command, options) =>
+          shellExec(command, { ...options, signal: ctx.signal });
+  const reviewerDeps = (ctx?: StepContext) => ({
     ...base,
-    run,
-    shell: shellExec,
+    run: runWith(ctx),
+    shell: shellWith(ctx),
     exists: async (path: string) => {
       try {
         await access(join(repoDir, path));
@@ -107,7 +118,7 @@ export async function buildLoopDeps(
       }
     },
     perspectives,
-  };
+  });
 
   const chat = chatFromConfig(config);
   const specifierInstructions = await loadRoleInstructions(
@@ -197,31 +208,32 @@ export async function buildLoopDeps(
     ...(progress === undefined ? {} : { progress }),
     log,
     pickUp: (issue) => pickUp({ config, store, board: github }, issue),
-    test: (issue) =>
+    test: (issue, ctx) =>
       runTester(
         {
           ...base,
-          run,
+          run: runWith(ctx),
           readFile: (path) => readFile(join(repoDir, path), "utf8"),
-          shell: shellExec,
+          shell: shellWith(ctx),
           instructions: testerInstructions,
         },
         issue,
       ),
-    implement: (issue, findings) =>
+    implement: (issue, findings, ctx) =>
       runImplementer(
         {
           ...base,
           run,
-          shell: shellExec,
+          shell: shellWith(ctx),
           instructions: implementerInstructions,
+          ...(ctx === undefined ? {} : { signal: ctx.signal }),
         },
         issue,
         findings,
       ),
-    checkCi: (issue) => checkCi(reviewerDeps, issue.number),
-    review: (issue) => runReviewer(reviewerDeps, issue),
-    merge: (issue) => mergeApproved(reviewerDeps, issue.number),
+    checkCi: (issue, ctx) => checkCi(reviewerDeps(ctx), issue.number),
+    review: (issue, ctx) => runReviewer(reviewerDeps(ctx), issue),
+    merge: (issue, ctx) => mergeApproved(reviewerDeps(ctx), issue.number),
     syncMain: (issue, pr) => syncMain(base, issue.number, pr),
   };
 }
@@ -424,6 +436,9 @@ export async function start(
       control: {
         stop: () => supervisor?.stop() ?? Promise.resolve(),
         restart: () => supervisor?.restart() ?? Promise.resolve(),
+        abort: (issue) =>
+          supervisor?.abort(issue) ??
+          Promise.reject(new Error("まだ起動していません")),
       },
     });
     // 再起動のたびに、読み直した設定で作り直す

@@ -2,7 +2,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MemoryChat } from "./chat.js";
 import { parseConfig } from "./config.js";
+import { PartialWorkAbortError } from "./partial-work.js";
 import {
+  abortComment,
+  abortReason,
   MAX_FAILURES,
   runLoop,
   newLoopState,
@@ -44,7 +47,11 @@ function setup(
   const results: Partial<Record<string, () => Promise<StepResult>>> = {};
   const step =
     (name: string) =>
-    (i: LoopIssue, ...rest: unknown[]): Promise<StepResult> => {
+    (i: LoopIssue, ...args: unknown[]): Promise<StepResult> => {
+      // 最後の引数の中断の signal（StepContext）は記録しない
+      const rest = args.filter(
+        (a) => !(typeof a === "object" && a !== null && "signal" in a),
+      );
       calls.push(
         `${name} #${i.number}${rest.length ? ` ${JSON.stringify(rest[0])}` : ""}`,
       );
@@ -446,6 +453,151 @@ describe("tick", () => {
     t.results.test = () => Promise.reject(new Error("x"));
     for (let i = 1; i < MAX_FAILURES; i++) await tick(t.deps, state);
     expect(t.moves).toEqual([]);
+  });
+});
+
+describe("管理画面からの中断（StepAborter）", () => {
+  it("動いている段階に signal を渡し、中断されたら失敗に数えずに Blocked にする", async () => {
+    const t = setup({ Testing: [3] });
+    const state = newLoopState();
+    t.results.test = () => {
+      expect(state.steps.running()).toBe(3);
+      expect(state.steps.abort(4)).toBe(false);
+      expect(state.steps.abort(3)).toBe(true);
+      return Promise.reject(new Error("中断しました"));
+    };
+    await tick(t.deps, state);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    expect(t.comments).toHaveLength(1);
+    expect(t.comments[0]?.mention).toBe(true);
+    expect(t.comments[0]?.body).toContain("管理画面から中断しました");
+    expect(t.comments[0]?.body).not.toContain("失敗");
+    const record = await t.store.get({ repo: REPO, issue: 3 });
+    expect(record?.blockedReason).toBe("管理画面から中断しました。");
+    expect(state.failures.size).toBe(0);
+    expect(state.steps.running()).toBeUndefined();
+  });
+
+  it("段階の関数に中断の signal（StepContext）を渡す", async () => {
+    const t = setup({ Testing: [3] });
+    const seen: unknown[] = [];
+    t.deps.test = (_i, ctx) => {
+      seen.push(ctx?.signal);
+      return Promise.resolve({ status: "ok" });
+    };
+    await tick(t.deps, newLoopState());
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("役の名前を中断の理由に入れる", () => {
+    expect(abortReason("implementer")).toBe(
+      "管理画面から中断しました（実装役の作業中）。",
+    );
+    expect(abortReason(undefined)).toBe("管理画面から中断しました。");
+  });
+
+  it("変更の残し方に合わせてコメントの文を変える", () => {
+    expect(abortComment("implementer", "Ready", { kind: "pushed" })).toContain(
+      "それまでの変更は Issue のブランチに残しています。",
+    );
+    expect(abortComment("implementer", "Ready", { kind: "nothing" })).toContain(
+      "ブランチに残す変更はありませんでした。",
+    );
+    expect(
+      abortComment("implementer", "Ready", { kind: "discarded" }),
+    ).not.toContain("残しています");
+    // 変更を残さない役では、残したとは書かない
+    const tester = abortComment("tester", "Ready");
+    expect(tester).not.toContain("残しています");
+    expect(tester).toContain("最初からやり直します");
+    for (const role of ["reviewer", "ci", "merge"] as const) {
+      expect(abortComment(role, "Ready")).not.toContain("残しています");
+    }
+    expect(abortComment("reviewer", "Ready")).toContain(
+      "続けるときは Ready 列に戻してください。",
+    );
+  });
+
+  it("変更をブランチに残せなかったら、理由をコメント・止まった理由・ログに出す", async () => {
+    const t = setup({ Implementing: [3] });
+    await t.setStage(3, "implementing");
+    const state = newLoopState();
+    t.results.implement = () => {
+      state.steps.abort(3);
+      return Promise.reject(
+        new PartialWorkAbortError({ kind: "failed", reason: "通信に失敗" }),
+      );
+    };
+    await tick(t.deps, state);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    const body = t.comments[0]?.body ?? "";
+    expect(body).toContain(
+      "変更をブランチに残せませんでした（理由: 通信に失敗）",
+    );
+    expect(body).not.toContain("残しています");
+    const record = await t.store.get({ repo: REPO, issue: 3 });
+    expect(record?.blockedReason).toContain("通信に失敗");
+    expect(t.logs.some((l) => l.includes("通信に失敗"))).toBe(true);
+  });
+
+  it("中断されても段階が最後まで進んだ（マージした）ら、Blocked に移さず中断のコメントも付けない", async () => {
+    const t = setup({ Reviewing: [3] });
+    await t.setStage(3, "merging");
+    const state = newLoopState();
+    t.results.merge = () => {
+      expect(state.steps.abort(3)).toBe(true);
+      return Promise.resolve({ status: "merged" });
+    };
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["merge #3"]);
+    expect(t.moves.filter(([, c]) => c === "Blocked")).toEqual([]);
+    expect(t.comments.filter((c) => c.body.includes("中断"))).toEqual([]);
+    expect(t.logs).toContain("#3: merged");
+    expect(state.failures.size).toBe(0);
+  });
+
+  it("段階の合間に中断を頼まれたら、次の確認で段階を始めずに Blocked に移す", async () => {
+    const t = setup({ Reviewing: [3], Ready: [5] });
+    await t.setStage(3, "ci");
+    const state = newLoopState();
+    t.results.checkCi = () => Promise.resolve({ status: "pending" });
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["checkCi #3"]);
+    // CI の結果待ちの間（段階は動いていない）に中断する
+    expect(state.steps.running()).toBeUndefined();
+    expect(state.steps.abort(3)).toBe(true);
+    // 処理中でない Issue は受け付けない
+    expect(state.steps.abort(5)).toBe(false);
+    await tick(t.deps, state);
+    expect(t.calls).toEqual(["checkCi #3"]);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    expect(t.comments).toHaveLength(1);
+    expect(t.comments[0]?.mention).toBe(true);
+    expect(t.comments[0]?.body).toContain("管理画面から中断しました。");
+    const record = await t.store.get({ repo: REPO, issue: 3 });
+    expect(record?.blockedReason).toBe("管理画面から中断しました。");
+  });
+
+  it("中断の予約は、その Issue が処理中でなくなったら捨てる", () => {
+    const state = newLoopState();
+    state.steps.setWorking([3]);
+    expect(state.steps.abort(3)).toBe(true);
+    state.steps.setWorking([]);
+    expect(state.steps.takePending(3)).toBe(false);
+    expect(state.steps.abort(3)).toBe(false);
+  });
+
+  it("中断のほかに失敗していたら、その内容をログに出す", async () => {
+    const t = setup({ Testing: [3] });
+    const state = newLoopState();
+    t.results.test = () => {
+      state.steps.abort(3);
+      return Promise.reject(new Error("git が壊れた"));
+    };
+    await tick(t.deps, state);
+    expect(t.moves).toEqual([[3, "Blocked"]]);
+    expect(t.logs.some((l) => l.includes("git が壊れた"))).toBe(true);
   });
 });
 

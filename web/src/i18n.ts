@@ -23,6 +23,18 @@ export interface Messages {
   stopOk: string;
   toastRestart: string;
   toastStop: string;
+  /** 処理中の Issue の欄の「この作業を中断」 */
+  abort: string;
+  /** 中断のダイアログの確認のボタン */
+  abortOk: string;
+  /** 中断のダイアログの見出し（{n} は Issue の番号） */
+  abortTitle: string;
+  /** 中断のダイアログの本文（{role} は動いている役） */
+  abortBody: string;
+  /** 動いている役がわからないときの {role} */
+  someRole: string;
+  /** 中断を受け付けたときの知らせ（{n} は Issue の番号） */
+  toastAbort: string;
   stRunning: string;
   stIdle: string;
   stStopping: string;
@@ -117,6 +129,12 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     stopOk: "停止する",
     toastRestart: "再起動しました",
     toastStop: "停止しました",
+    abort: "この作業を中断",
+    abortOk: "中断する",
+    abortTitle: "#{n} の作業を中断しますか？",
+    abortBody: "動作中の{role}を止め、Issue を Blocked 列に移します。",
+    someRole: "役",
+    toastAbort: "#{n} の作業を中断しました",
     stRunning: "動作中",
     stIdle: "待機中",
     stStopping: "停止しています",
@@ -211,6 +229,13 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     stopOk: "Stop",
     toastRestart: "Restarted",
     toastStop: "Stopped",
+    abort: "Abort this run",
+    abortOk: "Abort run",
+    abortTitle: "Abort the run for #{n}?",
+    abortBody:
+      "This stops the running {role} and moves the issue to the Blocked column.",
+    someRole: "role",
+    toastAbort: "Aborted the run for #{n}",
     stRunning: "Running",
     stIdle: "Idle",
     stStopping: "Stopping",
@@ -286,6 +311,17 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     },
   },
 };
+
+/** 文言の {名前} を埋める */
+export function fill(
+  text: string,
+  values: Readonly<Record<string, string | number>>,
+): string {
+  return text.replace(/\{(\w+)\}/g, (all, name: string) => {
+    const v = values[name];
+    return v === undefined ? all : String(v);
+  });
+}
 
 /** 稼働状態の文言 */
 export function statusLabel(t: Messages, status: Status): string {

@@ -5,7 +5,7 @@
  */
 import type { AdminStatus } from "./admin-server.js";
 import { type Config, loadConfig } from "./config.js";
-import { type LoopDeps, runLoop } from "./loop.js";
+import { type LoopDeps, runLoop, StepAborter } from "./loop.js";
 
 export interface SupervisorOptions {
   /** 対象リポジトリ（再起動のたびに .conductor/config.yaml を読み直す） */
@@ -29,6 +29,13 @@ export interface Supervisor {
   restart(): Promise<void>;
   /** すべて終える（Ctrl+C のとき start.ts が呼ぶ）。今の段階を終えてから止まったら resolve */
   shutdown(): Promise<void>;
+  /**
+   * 処理中の Issue の作業を中断する。いま動いている段階の signal をすぐ abort し、受け付けたら resolve（役が終わるのは待たない）。
+   * 中断した段階が終わったら、常駐ループが Issue を Blocked に移す。
+   * 段階の合間（CI の結果待ちの間など）なら中断を予約し、次の確認で段階を始めずに Blocked に移す。
+   * その Issue が処理中でなければ reject
+   */
+  abort(issue: number): Promise<void>;
 }
 
 function errorMessage(e: unknown): string {
@@ -39,6 +46,8 @@ function errorMessage(e: unknown): string {
 interface Run {
   controller: AbortController;
   done: Promise<void>;
+  /** いま動いている段階（中断を受け付ける） */
+  steps: StepAborter;
 }
 
 /** すぐに常駐ループを動かし始める */
@@ -63,7 +72,11 @@ export function startSupervisor(options: SupervisorOptions): Supervisor {
   const run = (config: Config): Promise<void> => {
     const controller = new AbortController();
     const { signal } = controller;
-    const self: Run = { controller, done: Promise.resolve() };
+    const self: Run = {
+      controller,
+      done: Promise.resolve(),
+      steps: new StepAborter(),
+    };
     current = self;
     // 部品を作る段階（同期の throw も reject として扱う）
     const built = Promise.resolve().then(() => options.buildDeps(config));
@@ -80,7 +93,7 @@ export function startSupervisor(options: SupervisorOptions): Supervisor {
             },
           },
           signal,
-          { intervalMs: config.poll_interval * 1000 },
+          { intervalMs: config.poll_interval * 1000, steps: self.steps },
         );
       } catch (e) {
         options.log(`常駐ループが止まりました: ${errorMessage(e)}`);
@@ -150,5 +163,15 @@ export function startSupervisor(options: SupervisorOptions): Supervisor {
         await halt();
         setStatus("stopped");
       }),
+    // 停止・再起動の順番待ちには入れない（止めるのを待っている間にも中断できるように）
+    abort: (issue) => {
+      if (current?.steps.abort(issue) !== true) {
+        return Promise.reject(
+          new Error(`#${issue} は処理中ではないため中断できません`),
+        );
+      }
+      options.log(`#${issue}: 管理画面から中断します`);
+      return Promise.resolve();
+    },
   };
 }

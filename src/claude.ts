@@ -6,11 +6,18 @@
  * - --permission-mode dontAsk ＋ 許可リスト：リストにない操作は確認なしで拒否される
  * - 利用上限に達したら、リセット時刻まで待って同じ依頼をやり直す
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { commandExec, type Exec } from "./exec.js";
+import {
+  abortError,
+  commandExec,
+  type Exec,
+  type ExecResult,
+  isAbortError,
+} from "./exec.js";
 
 export type { Exec, ExecResult } from "./exec.js";
 
@@ -85,6 +92,8 @@ export interface RoleRun<S extends z.ZodType> {
   model?: string;
   /** 1回の実行の制限時間（ミリ秒） */
   timeoutMs?: number;
+  /** 中断の signal。来たら claude -p を子孫ごと終わらせ、やり直さずに AbortError で reject する */
+  signal?: AbortSignal;
 }
 
 export interface RoleResult<T> {
@@ -261,6 +270,35 @@ function zoneOffsetMs(tz: string | undefined, at: Date): number {
   return asUtc - Math.floor(at.getTime() / 1000) * 1000;
 }
 
+/** 中断されたか（signal は途中で変わるので、毎回読み直す） */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+/** 待ちの途中で中断されたら、待ちを終えずに AbortError で reject する */
+function untilAborted(
+  wait: Promise<void>,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal === undefined) return wait;
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    wait.then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) reject(abortError());
+        else resolve();
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
+}
+
 /** 利用上限で待つ回数の上限（無限に待ち続けないため） */
 const MAX_LIMIT_WAITS = 10;
 
@@ -268,17 +306,29 @@ export async function runRole<S extends z.ZodType>(
   run: RoleRun<S>,
   deps: ClaudeDeps,
 ): Promise<RoleResult<z.infer<S>>> {
-  const dir = await mkdtemp(join(tmpdir(), "conductor-role-"));
+  // 小さなファイルなので同期で書く（すぐに claude -p を起動し、起動の直後から中断できるように）
+  const dir = mkdtempSync(join(tmpdir(), "conductor-role-"));
   const systemPromptFile = join(dir, `${run.role}.md`);
   try {
-    await writeFile(systemPromptFile, run.systemPrompt, "utf8");
+    writeFileSync(systemPromptFile, run.systemPrompt, "utf8");
     const args = buildArgs(run, systemPromptFile);
     for (let waits = 0; ; waits++) {
-      const res = await deps.exec(args, {
-        cwd: run.cwd,
-        input: run.prompt,
-        ...(run.timeoutMs !== undefined && { timeoutMs: run.timeoutMs }),
-      });
+      if (isAborted(run.signal)) throw abortError();
+      let res: ExecResult;
+      try {
+        res = await deps.exec(args, {
+          cwd: run.cwd,
+          input: run.prompt,
+          ...(run.timeoutMs !== undefined && { timeoutMs: run.timeoutMs }),
+          ...(run.signal !== undefined && { signal: run.signal }),
+        });
+      } catch (e) {
+        if (isAbortError(e)) throw e;
+        if (isAborted(run.signal)) throw abortError();
+        throw e;
+      }
+      // 中断されたら、結果によらずやり直さない（利用上限の待ちにもしない）
+      if (isAborted(run.signal)) throw abortError();
       const limitText = `${res.stdout}\n${res.stderr}`;
       const parsed = parseCliResult(res.stdout);
       const failed = res.code !== 0 || !parsed || parsed.is_error;
@@ -297,8 +347,9 @@ export async function runRole<S extends z.ZodType>(
             resumeAt,
             message: (parsed?.result ?? limitText).trim(),
           });
-          await deps.sleep(
-            Math.max(0, resumeAt.getTime() - deps.now().getTime()),
+          await untilAborted(
+            deps.sleep(Math.max(0, resumeAt.getTime() - deps.now().getTime())),
+            run.signal,
           );
           continue;
         }
