@@ -12,7 +12,16 @@ import {
   dismissToast,
   TOAST_MS,
 } from "./control.js";
+import type { SettingsData } from "../../src/settings-data.js";
+import { isSettingsData } from "../../src/settings-rules.js";
 import { Dashboard } from "./Dashboard.js";
+import { Settings } from "./Settings.js";
+import {
+  confirmSettings,
+  initSettings,
+  SETTINGS_PATH,
+  type SettingsState,
+} from "./settings-state.js";
 import { type AdminInfo, EVENTS_URL, parseEvent } from "./events.js";
 import { type Lang, MESSAGES } from "./i18n.js";
 import { loadLanguage, saveLanguage } from "./language.js";
@@ -23,6 +32,38 @@ import { TaskList } from "./TaskList.js";
 import { ALL_COLUMNS } from "./task-filter.js";
 import { DARK_QUERY, type Scheme, watchColorScheme } from "./theme.js";
 import { type TimelineOrder, toggleExpanded } from "./timeline.js";
+
+/** 設定を開いたら GET /api/settings で読む（開くたびに読み直す） */
+function useSettingsData(
+  active: boolean,
+): [
+  SettingsData | undefined,
+  SettingsState | undefined,
+  (s: SettingsState) => void,
+] {
+  const [data, setData] = useState<SettingsData>();
+  const [state, setState] = useState<SettingsState>();
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(SETTINGS_PATH);
+        if (!res.ok) return;
+        const next: unknown = await res.json();
+        if (cancelled || !isSettingsData(next)) return;
+        setData(next);
+        setState(initSettings(next));
+      } catch {
+        // 読めなければ見出しだけを出す
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
+  return [data, state, setState];
+}
 
 /** 稼働状態などを SSE で受け取る。つながらなくなったら停止中として示す */
 function useAdminInfo(): AdminInfo | undefined {
@@ -101,6 +142,10 @@ export function App(): ReactElement | null {
   const [expanded, setExpanded] = useState<Record<string, number[]>>({});
   // 再起動・停止の確認のダイアログと知らせ
   const [control, setControl] = useState<ControlState>({});
+  // 設定（開いたときに読む）
+  const [settingsData, settingsState, setSettingsState] = useSettingsData(
+    menuOf(path) === "settings",
+  );
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -193,6 +238,28 @@ export function App(): ReactElement | null {
           onFilter={setTaskFilter}
           onQuery={setTaskQuery}
           onNavigate={navigate}
+        />
+      ) : menu === "settings" &&
+        settingsData !== undefined &&
+        settingsState !== undefined ? (
+        <Settings
+          data={settingsData}
+          state={settingsState}
+          lang={lang}
+          onState={setSettingsState}
+          onSave={() => {
+            void confirmSettings(
+              settingsState,
+              (p, form) =>
+                fetch(p, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ form }),
+                }),
+              setSettingsState,
+            );
+          }}
+          onRestart={() => setControl((prev) => askControl(prev, "restart"))}
         />
       ) : (
         <h1 style={{ margin: 0, fontSize: 20 }}>{titles[menu]}</h1>
