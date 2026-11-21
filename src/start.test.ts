@@ -9,10 +9,12 @@ import {
   chatFromConfig,
   dashboardRefresher,
   roleRunner,
+  taskDetailsRefresher,
   tasksBoard,
   tasksRefresher,
 } from "./start.js";
 import { MemoryStore } from "./store.js";
+import type { TaskDetailData } from "./task-detail.js";
 import type { TaskIssue, TasksData } from "./tasks.js";
 
 describe("chatFromConfig", () => {
@@ -142,6 +144,66 @@ describe("tasksRefresher", () => {
     refresher.update();
     await refresher.idle();
     expect(logs).toEqual(["タスク一覧の内容を読めませんでした: 落ちた"]);
+  });
+});
+
+describe("taskDetailsRefresher", () => {
+  const config = parseConfig(
+    [
+      "github: { repo: me/app, project: 3, notify: me }",
+      "protected: [e2e/**]",
+      "commands: { setup: s, test: t, acceptance: a, typecheck: y, build: b }",
+    ].join("\n"),
+  );
+
+  it("Project のすべての Issue の詳細を、Issue の一覧を1度だけ取って知らせる。作業中の役も入れる", async () => {
+    let reads = 0;
+    const board = {
+      issuesByColumn: () => {
+        reads++;
+        return Promise.resolve(
+          new Map<string, TaskIssue[]>([
+            ["Ready", [{ number: 3, title: "c", body: "" }]],
+            ["Implementing", [{ number: 1, title: "a", body: "" }]],
+          ]),
+        );
+      },
+      isMerged: () => Promise.resolve(false),
+    };
+    const published: TaskDetailData[] = [];
+    const refresher = taskDetailsRefresher(
+      { config, store: new MemoryStore(), board },
+      (data) => published.push(data),
+      () => {},
+    );
+    refresher.update({
+      activity: { running: { issue: 1, role: "implementer" } },
+    });
+    await refresher.idle();
+    expect(reads).toBe(1);
+    expect(published.map((d) => [d.number, d.title, d.working])).toEqual([
+      [1, "a", "implementer"],
+      [3, "c", undefined],
+    ]);
+  });
+
+  it("読めなくても止まらず、書き残す", async () => {
+    const logs: string[] = [];
+    const refresher = taskDetailsRefresher(
+      {
+        config,
+        store: new MemoryStore(),
+        board: {
+          issuesByColumn: () => Promise.reject(new Error("落ちた")),
+          isMerged: () => Promise.resolve(false),
+        },
+      },
+      () => {},
+      (text) => logs.push(text),
+    );
+    refresher.update();
+    await refresher.idle();
+    expect(logs).toEqual(["タスク詳細の内容を読めませんでした: 落ちた"]);
   });
 });
 

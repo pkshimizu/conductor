@@ -37,6 +37,11 @@ import { runSpecifier } from "./specifier.js";
 import type { RequirementRecord, Store } from "./store.js";
 import { syncMain } from "./sync.js";
 import {
+  loadTaskDetail,
+  type TaskDetailData,
+  type TaskDetailDeps,
+} from "./task-detail.js";
+import {
   loadTasks,
   type TasksBoard,
   type TasksData,
@@ -317,6 +322,68 @@ export function tasksRefresher(
   };
 }
 
+export interface TaskDetailsRefresher {
+  /** 役の結果や常駐ループの状態が変わったかもしれない。内容を読み直して知らせる */
+  update(change?: { activity?: LoopActivity }): void;
+  /** 読み直しの途中なら、終わるまで待つ */
+  idle(): Promise<void>;
+}
+
+/**
+ * Project のすべての Issue のタスク詳細を読み直して、1件ずつ publish に渡す。
+ * GitHub の Issue の一覧は1回の読み直しで1度だけ取る。
+ * 読み直しは1つずつ行い、途中で頼まれたら終わってからもう1回だけ読み直す。読めなくても常駐ループは止めない
+ */
+export function taskDetailsRefresher(
+  deps: Omit<TaskDetailDeps, "activity">,
+  publish: (data: TaskDetailData) => void,
+  log: (text: string) => void,
+): TaskDetailsRefresher {
+  let activity: LoopActivity = {};
+  let pending = false;
+  let running: Promise<void> | undefined;
+
+  const refresh = async () => {
+    const byColumn = await deps.board.issuesByColumn();
+    const board: TasksBoard = {
+      issuesByColumn: () => Promise.resolve(byColumn),
+      isMerged: (pr) => deps.board.isMerged(pr),
+    };
+    const numbers = [...byColumn.values()]
+      .flat()
+      .map((i) => i.number)
+      .sort((a, b) => a - b);
+    for (const n of numbers) {
+      publish(await loadTaskDetail({ ...deps, board, activity }, n));
+    }
+  };
+
+  const loop = async () => {
+    while (pending) {
+      pending = false;
+      try {
+        await refresh();
+      } catch (e) {
+        log(
+          `タスク詳細の内容を読めませんでした: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    running = undefined;
+  };
+
+  return {
+    update(change) {
+      if (change?.activity !== undefined) activity = change.activity;
+      pending = true;
+      running ??= loop();
+    },
+    async idle() {
+      await running;
+    },
+  };
+}
+
 /**
  * タスク一覧に使う GitHub。閉じた Issue（Done など）も含めて取り、
  * マージ済みとわかった PR は覚えておく（マージ済みは戻らないので、毎回は確かめない）
@@ -367,9 +434,16 @@ export async function start(
         (data) => admin.setDashboard(data),
         log,
       );
+      // タスク一覧とタスク詳細は同じ GitHub を使い、マージ済みとわかった PR を共有する
+      const board = tasksBoard(githubFromConfig(config));
       const tasks = tasksRefresher(
-        { config, store, board: tasksBoard(githubFromConfig(config)) },
+        { config, store, board },
         (data) => admin.setTasks(data),
+        log,
+      );
+      const details = taskDetailsRefresher(
+        { config, store, board },
+        (data) => admin.setTaskDetail(data),
         log,
       );
       await runLoop(
@@ -379,10 +453,12 @@ export async function start(
             admin.setStatus(status);
             dashboard.update({ status });
             tasks.update();
+            details.update();
           },
           onActivity: (activity) => {
             dashboard.update({ activity });
             tasks.update();
+            details.update({ activity });
           },
         },
         controller.signal,
@@ -390,7 +466,7 @@ export async function start(
       );
       admin.setStatus("stopped");
       dashboard.update({ status: "stopped" });
-      await Promise.all([dashboard.idle(), tasks.idle()]);
+      await Promise.all([dashboard.idle(), tasks.idle(), details.idle()]);
     } finally {
       await admin.close();
     }

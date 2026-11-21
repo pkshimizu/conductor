@@ -47,6 +47,18 @@ export interface Messages {
   colUpdated: string;
   noResults: string;
   merged: string;
+  back: string;
+  timeline: string;
+  sortOrder: string;
+  newest: string;
+  oldest: string;
+  showMore: string;
+  showLess: string;
+  workingNow: string;
+  workingNote: string;
+  noTimeline: string;
+  /** 役の結果 */
+  results: Readonly<Record<ResultKey, string>>;
   /** 進み具合の段階 */
   stage: Readonly<Record<StageKey, string>>;
   /** 動いている役 */
@@ -56,6 +68,10 @@ export interface Messages {
 /** 進み具合の段階（テスト→実装→CI→レビュー→マージ） */
 export const STAGE_KEYS = ["test", "impl", "ci", "review", "merge"] as const;
 export type StageKey = (typeof STAGE_KEYS)[number];
+
+/** 役の結果（src/task-detail-data.ts の TimelineResult と同じ） */
+export type ResultKey =
+  "approved" | "changes" | "objection" | "done" | "failed" | "passed";
 
 /** 動いている役（src/loop.ts の ActiveRole と同じ） */
 export type RoleKey =
@@ -113,6 +129,24 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     colUpdated: "更新日時",
     noResults: "該当する Issue はありません",
     merged: "マージ済み",
+    back: "タスク一覧へ戻る",
+    timeline: "経過",
+    sortOrder: "並び順",
+    newest: "新しい順",
+    oldest: "古い順",
+    showMore: "続きを表示",
+    showLess: "折りたたむ",
+    workingNow: "作業中",
+    workingNote: "作業中の出力は表示しません。終わると結果がここに並びます。",
+    noTimeline: "まだ経過はありません。",
+    results: {
+      approved: "承認",
+      changes: "差し戻し",
+      objection: "異議",
+      done: "完了",
+      failed: "失敗",
+      passed: "成功",
+    },
     stage: {
       test: "テスト",
       impl: "実装",
@@ -175,6 +209,25 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     colUpdated: "Updated",
     noResults: "No matching issues",
     merged: "Merged",
+    back: "Back to tasks",
+    timeline: "Timeline",
+    sortOrder: "Sort order",
+    newest: "Newest first",
+    oldest: "Oldest first",
+    showMore: "Show more",
+    showLess: "Show less",
+    workingNow: "Working",
+    workingNote:
+      "Output from a running role is not shown. Its result appears here when it finishes.",
+    noTimeline: "Nothing has happened yet.",
+    results: {
+      approved: "Approved",
+      changes: "Changes requested",
+      objection: "Objection",
+      done: "Done",
+      failed: "Failed",
+      passed: "Passed",
+    },
     stage: {
       test: "Test",
       impl: "Implement",
