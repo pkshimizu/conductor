@@ -65,6 +65,28 @@ describe("parseEvent", () => {
     expect(parseEvent(JSON.stringify(broken))).toEqual(base);
   });
 
+  it("タスク詳細の内容があれば番号ごとに読む。形が違うものは除く", () => {
+    const detail = {
+      number: 12,
+      title: "t",
+      column: "Implementing",
+      repo: "o/r",
+      columns: ["Ready", "Implementing"],
+      rejections: 0,
+      objections: 0,
+      limits: { rejections: 3, objections: 2 },
+      timeline: [],
+    };
+    const base = { status: "running", repo: "o/r", project: 3 };
+    const data = {
+      ...base,
+      details: { "12": detail, "13": { ...detail, number: 13, timeline: 1 } },
+    };
+    expect(parseEvent(JSON.stringify(data))?.details).toEqual({ "12": detail });
+    const none = { ...base, details: { "12": { ...detail, number: 99 } } };
+    expect(parseEvent(JSON.stringify(none))).toEqual(base);
+  });
+
   it("形が違えば undefined", () => {
     expect(parseEvent("not json")).toBeUndefined();
     expect(parseEvent("null")).toBeUndefined();

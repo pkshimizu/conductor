@@ -12,6 +12,7 @@ import {
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DashboardData } from "./dashboard-data.js";
+import type { TaskDetailData } from "./task-detail-data.js";
 import type { TasksData } from "./tasks-data.js";
 
 /** 稼働状態（動作中・待機中・停止中） */
@@ -39,6 +40,13 @@ export interface AdminServer {
   setDashboard(data: DashboardData): void;
   /** タスク一覧の内容を変える。開いている画面に SSE で push する */
   setTasks(data: TasksData): void;
+  /** タスク詳細の内容を変える（Issue の番号ごとに最後のものを覚える）。開いている画面に SSE で push する */
+  setTaskDetail(data: TaskDetailData): void;
+  /**
+   * すべての Issue のタスク詳細をまとめて入れ替える（list に無い Issue は除く）。
+   * 開いている画面には1度だけ SSE で push する
+   */
+  setTaskDetails(list: readonly TaskDetailData[]): void;
   close(): Promise<void>;
 }
 
@@ -114,12 +122,14 @@ export interface AdminInfo {
   dashboard?: DashboardData;
   /** タスク一覧の内容（最後に setTasks したもの）。まだ無ければ省く */
   tasks?: TasksData;
+  /** タスク詳細の内容（Issue の番号の文字列ごとに、最後に setTaskDetail したもの）。まだ無ければ省く */
+  details?: Record<string, TaskDetailData>;
 }
 
 /** SSE で送る1件（data: に JSON を1行） */
 export function statusEvent(info: AdminInfo): string {
-  const { status, repo, project, dashboard, tasks } = info;
-  return `data: ${JSON.stringify({ status, repo, project, dashboard, tasks })}\n\n`;
+  const { status, repo, project, dashboard, tasks, details } = info;
+  return `data: ${JSON.stringify({ status, repo, project, dashboard, tasks, details })}\n\n`;
 }
 
 async function isFile(file: string): Promise<boolean> {
@@ -161,6 +171,7 @@ export async function startAdminServer(
   let status = options.status;
   let dashboard: DashboardData | undefined;
   let tasks: TasksData | undefined;
+  const details = new Map<number, TaskDetailData>();
   let port = 0;
   const clients = new Set<ServerResponse>();
   const info = (): AdminInfo => ({
@@ -169,6 +180,13 @@ export async function startAdminServer(
     project,
     ...(dashboard === undefined ? {} : { dashboard }),
     ...(tasks === undefined ? {} : { tasks }),
+    ...(details.size === 0
+      ? {}
+      : {
+          details: Object.fromEntries(
+            [...details].map(([n, d]) => [String(n), d] as const),
+          ),
+        }),
   });
   const push = () => {
     const event = statusEvent(info());
@@ -257,6 +275,15 @@ export async function startAdminServer(
     },
     setTasks(data: TasksData) {
       tasks = data;
+      push();
+    },
+    setTaskDetail(data: TaskDetailData) {
+      details.set(data.number, data);
+      push();
+    },
+    setTaskDetails(list: readonly TaskDetailData[]) {
+      details.clear();
+      for (const data of list) details.set(data.number, data);
       push();
     },
     close() {

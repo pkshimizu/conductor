@@ -36,8 +36,10 @@ import { checkSpecApproval } from "./spec-approval.js";
 import { runSpecifier } from "./specifier.js";
 import type { RequirementRecord, Store } from "./store.js";
 import { syncMain } from "./sync.js";
+import { loadTaskDetail, type TaskDetailData } from "./task-detail.js";
 import {
   loadTasks,
+  type TaskIssue,
   type TasksBoard,
   type TasksData,
   type TasksDeps,
@@ -273,41 +275,95 @@ export function dashboardRefresher(
 }
 
 export interface TasksRefresher {
-  /** Issue の列や回数が変わったかもしれない。内容を読み直して知らせる */
-  update(): void;
+  /** Issue の列や回数、役の結果、常駐ループの状態が変わったかもしれない。内容を読み直して知らせる */
+  update(change?: { activity?: LoopActivity }): void;
   /** 読み直しの途中なら、終わるまで待つ */
   idle(): Promise<void>;
 }
 
+/** 読み直しで作った内容の渡し先 */
+export interface TasksPublish {
+  /** タスク一覧の内容 */
+  tasks(data: TasksData): void;
+  /** Project のすべての Issue のタスク詳細（番号の小さい順）。1回の読み直しで1度だけ呼ぶ */
+  details(list: TaskDetailData[]): void;
+}
+
 /**
- * タスク一覧の内容を読み直して publish に渡す。
+ * 1回の読み直しの間だけ使う board。Issue の一覧は1度だけ取り、
+ * PR がマージ済みかも PR ごとに1度だけ確かめる（タスク一覧とタスク詳細で同じ問い合わせを重ねない）
+ */
+export function snapshotBoard(board: TasksBoard): TasksBoard {
+  let byColumn: Promise<Map<string, TaskIssue[]>> | undefined;
+  const merged = new Map<number, Promise<boolean>>();
+  return {
+    issuesByColumn() {
+      byColumn ??= board.issuesByColumn();
+      return byColumn;
+    },
+    isMerged(pr) {
+      let found = merged.get(pr);
+      if (found === undefined) {
+        found = board.isMerged(pr);
+        merged.set(pr, found);
+      }
+      return found;
+    },
+  };
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * タスク一覧と、Project のすべての Issue のタスク詳細を読み直して publish に渡す。
+ * 1回の読み直しの中では GitHub への問い合わせを共有する（snapshotBoard）。
  * 読み直しは1つずつ行い、途中で頼まれたら終わってからもう1回だけ読み直す（GitHub に要求を重ねない）。
  * 読めなくても常駐ループは止めない
  */
 export function tasksRefresher(
   deps: TasksDeps,
-  publish: (data: TasksData) => void,
+  publish: TasksPublish,
   log: (text: string) => void,
 ): TasksRefresher {
+  let activity: LoopActivity = {};
   let pending = false;
   let running: Promise<void> | undefined;
+
+  const refresh = async () => {
+    const board = snapshotBoard(deps.board);
+    try {
+      publish.tasks(await loadTasks({ ...deps, board }));
+    } catch (e) {
+      log(`タスク一覧の内容を読めませんでした: ${messageOf(e)}`);
+    }
+    try {
+      const numbers = [...(await board.issuesByColumn()).values()]
+        .flat()
+        .map((i) => i.number)
+        .sort((a, b) => a - b);
+      const list: TaskDetailData[] = [];
+      for (const n of numbers) {
+        list.push(await loadTaskDetail({ ...deps, board, activity }, n));
+      }
+      publish.details(list);
+    } catch (e) {
+      log(`タスク詳細の内容を読めませんでした: ${messageOf(e)}`);
+    }
+  };
 
   const loop = async () => {
     while (pending) {
       pending = false;
-      try {
-        publish(await loadTasks(deps));
-      } catch (e) {
-        log(
-          `タスク一覧の内容を読めませんでした: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
+      await refresh();
     }
     running = undefined;
   };
 
   return {
-    update() {
+    update(change) {
+      if (change?.activity !== undefined) activity = change.activity;
       pending = true;
       running ??= loop();
     },
@@ -367,9 +423,13 @@ export async function start(
         (data) => admin.setDashboard(data),
         log,
       );
+      // タスク一覧とタスク詳細は1回の読み直しでまとめて作り、GitHub への問い合わせを共有する
       const tasks = tasksRefresher(
         { config, store, board: tasksBoard(githubFromConfig(config)) },
-        (data) => admin.setTasks(data),
+        {
+          tasks: (data) => admin.setTasks(data),
+          details: (list) => admin.setTaskDetails(list),
+        },
         log,
       );
       await runLoop(
@@ -382,7 +442,7 @@ export async function start(
           },
           onActivity: (activity) => {
             dashboard.update({ activity });
-            tasks.update();
+            tasks.update({ activity });
           },
         },
         controller.signal,

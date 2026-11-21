@@ -6,7 +6,6 @@
  */
 import type { CSSProperties, MouseEvent, ReactElement } from "react";
 import type {
-  DashboardActive,
   DashboardBlocked,
   DashboardData,
 } from "../../src/dashboard-data.js";
@@ -20,14 +19,9 @@ import {
   secondsUntil,
   stageKeyOf,
 } from "./dashboard-format.js";
-import {
-  type Lang,
-  type Messages,
-  MESSAGES,
-  STAGE_KEYS,
-  statusLabel,
-} from "./i18n.js";
+import { type Lang, type Messages, MESSAGES, statusLabel } from "./i18n.js";
 import { detailPath, isPlainClick } from "./navigation.js";
+import { Progress } from "./Progress.js";
 
 export type { DashboardData } from "../../src/dashboard-data.js";
 
@@ -428,100 +422,6 @@ function BlockedSection(props: {
   );
 }
 
-function stepDotStyle(done: boolean, current: boolean): CSSProperties {
-  const on = done || current;
-  return {
-    width: 22,
-    height: 22,
-    boxSizing: "border-box",
-    borderRadius: "50%",
-    flex: "none",
-    display: "grid",
-    placeItems: "center",
-    background: on ? "var(--accent)" : "var(--panel)",
-    border: `1.5px solid ${on ? "var(--accent)" : "var(--border2)"}`,
-    color: "#FFFFFF",
-    boxShadow: current ? "0 0 0 4px var(--accentSoft)" : "none",
-  };
-}
-
-function Progress(props: {
-  active: DashboardActive;
-  t: Messages;
-  elapsed: string;
-}): ReactElement {
-  const { active, t, elapsed } = props;
-  const currentIndex = STAGE_KEYS.indexOf(stageKeyOf(active.stage));
-  return (
-    <ol
-      aria-label={t.progress}
-      style={{
-        listStyle: "none",
-        margin: 0,
-        padding: 0,
-        display: "grid",
-        gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-        gap: 0,
-      }}
-    >
-      {STAGE_KEYS.map((key, i) => {
-        const done = i < currentIndex;
-        const current = i === currentIndex;
-        return (
-          <li
-            key={key}
-            aria-current={current ? "step" : undefined}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              minWidth: 0,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: current ? 600 : 500,
-                color: done || current ? "var(--fg)" : "var(--muted)",
-                paddingRight: 8,
-              }}
-            >
-              {t.stage[key]}
-            </span>
-            <span
-              aria-hidden="true"
-              style={{ display: "flex", alignItems: "center" }}
-            >
-              <span style={stepDotStyle(done, current)} />
-              <span
-                style={{
-                  flex: 1,
-                  height: 2,
-                  margin: "0 8px",
-                  borderRadius: 1,
-                  background: done ? "var(--accent)" : "var(--border2)",
-                  opacity: i === STAGE_KEYS.length - 1 ? 0 : 1,
-                }}
-              />
-            </span>
-            {current && (
-              <span
-                style={{
-                  ...MUTED_SMALL,
-                  paddingRight: 8,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {elapsed}
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 function ActiveSection(props: {
   data: DashboardData;
   lang: Lang;
@@ -656,7 +556,7 @@ function ActiveSection(props: {
               )}
             </div>
           </div>
-          <Progress active={active} t={t} elapsed={elapsed} />
+          <Progress stage={active.stage} t={t} note={elapsed} />
           {data.status === "stopped" && <p style={PAUSED}>{t.pausedNote}</p>}
           <div
             style={{

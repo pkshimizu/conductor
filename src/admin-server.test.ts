@@ -14,6 +14,7 @@ import {
   statusEvent,
 } from "./admin-server.js";
 import type { DashboardData } from "./dashboard-data.js";
+import type { TaskDetailData } from "./task-detail-data.js";
 import type { TasksData } from "./tasks-data.js";
 
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -226,6 +227,84 @@ describe("startAdminServer", () => {
     expect((await before.read()).value).toBe(want);
     const after = await open();
     expect((await after.read()).value).toBe(want);
+  });
+
+  it("setTaskDetail で Issue の番号ごとに最後の内容を覚えて push し、後から開いた画面にも送る", async () => {
+    const server = await serve(INDEX);
+    const detail = (number: number, title: string): TaskDetailData => ({
+      number,
+      title,
+      column: "Ready",
+      repo: "o/r",
+      columns: ["Ready"],
+      rejections: 0,
+      objections: 0,
+      limits: { rejections: 3, objections: 2 },
+      timeline: [],
+    });
+    const open = async () => {
+      const controller = new AbortController();
+      cleanups.push(async () => controller.abort());
+      const url = new URL("/api/events", server.url);
+      const res = await fetch(url, { signal: controller.signal });
+      return res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    };
+    const before = await open();
+    expect((await before.read()).value).toBe(statusEvent(INFO));
+    server.setTaskDetail(detail(1, "a"));
+    expect((await before.read()).value).toBe(
+      statusEvent({ ...INFO, details: { "1": detail(1, "a") } }),
+    );
+    server.setTaskDetail(detail(2, "b"));
+    await before.read();
+    server.setTaskDetail(detail(1, "c"));
+    const want = statusEvent({
+      ...INFO,
+      details: { "1": detail(1, "c"), "2": detail(2, "b") },
+    });
+    expect((await before.read()).value).toBe(want);
+    const after = await open();
+    expect((await after.read()).value).toBe(want);
+  });
+
+  it("setTaskDetails は全件を入れ替えて1度だけ push し、list に無い Issue は除く", async () => {
+    const server = await serve(INDEX);
+    const detail = (number: number, title: string): TaskDetailData => ({
+      number,
+      title,
+      column: "Ready",
+      repo: "o/r",
+      columns: ["Ready"],
+      rejections: 0,
+      objections: 0,
+      limits: { rejections: 3, objections: 2 },
+      timeline: [],
+    });
+    const controller = new AbortController();
+    cleanups.push(async () => controller.abort());
+    const res = await fetch(new URL("/api/events", server.url), {
+      signal: controller.signal,
+    });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    expect((await reader.read()).value).toBe(statusEvent(INFO));
+    server.setTaskDetails([detail(1, "a"), detail(2, "b")]);
+    server.setTaskDetails([detail(2, "c")]);
+    server.setStatus("stopped");
+    let text = "";
+    const end = statusEvent({
+      ...INFO,
+      status: "stopped",
+      details: { "2": detail(2, "c") },
+    });
+    while (!text.endsWith(end)) text += (await reader.read()).value ?? "";
+    expect(text).toBe(
+      statusEvent({
+        ...INFO,
+        details: { "1": detail(1, "a"), "2": detail(2, "b") },
+      }) +
+        statusEvent({ ...INFO, details: { "2": detail(2, "c") } }) +
+        end,
+    );
   });
 
   it("閉じたあとは接続できない。2回閉じてもよい", async () => {

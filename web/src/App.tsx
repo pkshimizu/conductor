@@ -8,10 +8,12 @@ import { type AdminInfo, EVENTS_URL, parseEvent } from "./events.js";
 import { type Lang, MESSAGES } from "./i18n.js";
 import { loadLanguage, saveLanguage } from "./language.js";
 import { Layout } from "./Layout.js";
-import { MENU_PATHS, menuOf } from "./routes.js";
+import { detailIssueOf, MENU_PATHS, menuOf } from "./routes.js";
+import { TaskDetail } from "./TaskDetail.js";
 import { TaskList } from "./TaskList.js";
 import { ALL_COLUMNS } from "./task-filter.js";
 import { DARK_QUERY, type Scheme, watchColorScheme } from "./theme.js";
+import { type TimelineOrder, toggleExpanded } from "./timeline.js";
 
 /** 稼働状態などを SSE で受け取る。つながらなくなったら停止中として示す */
 function useAdminInfo(): AdminInfo | undefined {
@@ -85,6 +87,9 @@ export function App(): ReactElement | null {
   // タスク一覧の絞り込み。詳細を開いて戻っても残す
   const [taskFilter, setTaskFilter] = useState<string>(ALL_COLUMNS);
   const [taskQuery, setTaskQuery] = useState("");
+  // タスク詳細の経過の並び順と、全文を出している経過（Issue の番号ごと）
+  const [order, setOrder] = useState<TimelineOrder>("newest");
+  const [expanded, setExpanded] = useState<Record<string, number[]>>({});
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -107,6 +112,14 @@ export function App(): ReactElement | null {
     info.dashboard === undefined
       ? undefined
       : { ...info.dashboard, status: info.status };
+  const detailIssue = detailIssueOf(path);
+  const detail =
+    detailIssue === undefined ? undefined : info.details?.[String(detailIssue)];
+  const toggle = (issue: number) => (index: number) =>
+    setExpanded((prev) => ({
+      ...prev,
+      [String(issue)]: toggleExpanded(prev[String(issue)] ?? [], index),
+    }));
 
   return (
     <Layout
@@ -124,6 +137,17 @@ export function App(): ReactElement | null {
           data={dashboard}
           lang={lang}
           now={now}
+          onNavigate={navigate}
+        />
+      ) : detail !== undefined ? (
+        <TaskDetail
+          data={detail}
+          lang={lang}
+          now={now}
+          order={order}
+          expanded={expanded[String(detail.number)] ?? []}
+          onOrder={setOrder}
+          onToggle={toggle(detail.number)}
           onNavigate={navigate}
         />
       ) : path === MENU_PATHS.tasks && info.tasks !== undefined ? (

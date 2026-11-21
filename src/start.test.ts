@@ -9,10 +9,12 @@ import {
   chatFromConfig,
   dashboardRefresher,
   roleRunner,
+  snapshotBoard,
   tasksBoard,
   tasksRefresher,
 } from "./start.js";
 import { MemoryStore } from "./store.js";
+import type { TaskDetailData } from "./task-detail.js";
 import type { TaskIssue, TasksData } from "./tasks.js";
 
 describe("chatFromConfig", () => {
@@ -113,7 +115,7 @@ describe("tasksRefresher", () => {
     const published: TasksData[] = [];
     const refresher = tasksRefresher(
       { config, store: new MemoryStore(), board },
-      (data) => published.push(data),
+      { tasks: (data) => published.push(data), details: () => {} },
       () => {},
     );
     refresher.update();
@@ -123,6 +125,53 @@ describe("tasksRefresher", () => {
     await refresher.idle();
     expect(reads).toBe(2);
     expect(published.map((d) => d.issues[0]?.number)).toEqual([1, 2]);
+  });
+
+  it("1回の読み直しで、Issue の一覧と PR のマージ済みかは1度ずつだけ問い合わせ、詳細は全件を1度だけ知らせる。作業中の役も入れる", async () => {
+    const store = new MemoryStore();
+    await store.update({ repo: "me/app", issue: 1 }, { pr: 10 });
+    await store.update({ repo: "me/app", issue: 3 }, { pr: 30 });
+    let reads = 0;
+    const asked: number[] = [];
+    const board = {
+      issuesByColumn: () => {
+        reads++;
+        return Promise.resolve(
+          new Map<string, TaskIssue[]>([
+            ["Ready", [{ number: 3, title: "c", body: "" }]],
+            ["Implementing", [{ number: 1, title: "a", body: "" }]],
+          ]),
+        );
+      },
+      isMerged: (pr: number) => {
+        asked.push(pr);
+        return Promise.resolve(pr === 30);
+      },
+    };
+    const tasks: TasksData[] = [];
+    const details: TaskDetailData[][] = [];
+    const refresher = tasksRefresher(
+      { config, store, board },
+      {
+        tasks: (data) => tasks.push(data),
+        details: (list) => details.push(list),
+      },
+      () => {},
+    );
+    refresher.update({
+      activity: { running: { issue: 1, role: "implementer" } },
+    });
+    await refresher.idle();
+    expect(reads).toBe(1);
+    expect(asked.sort((a, b) => a - b)).toEqual([10, 30]);
+    expect(tasks).toHaveLength(1);
+    expect(details).toHaveLength(1);
+    expect(
+      details[0]?.map((d) => [d.number, d.title, d.working, d.merged]),
+    ).toEqual([
+      [1, "a", "implementer", undefined],
+      [3, "c", undefined, true],
+    ]);
   });
 
   it("読めなくても止まらず、書き残す", async () => {
@@ -136,12 +185,37 @@ describe("tasksRefresher", () => {
           isMerged: () => Promise.resolve(false),
         },
       },
-      () => {},
+      { tasks: () => {}, details: () => {} },
       (text) => logs.push(text),
     );
     refresher.update();
     await refresher.idle();
-    expect(logs).toEqual(["タスク一覧の内容を読めませんでした: 落ちた"]);
+    expect(logs).toEqual([
+      "タスク一覧の内容を読めませんでした: 落ちた",
+      "タスク詳細の内容を読めませんでした: 落ちた",
+    ]);
+  });
+});
+
+describe("snapshotBoard", () => {
+  it("Issue の一覧と PR ごとのマージ済みかを、それぞれ1度だけ問い合わせる", async () => {
+    let reads = 0;
+    const asked: number[] = [];
+    const board = snapshotBoard({
+      issuesByColumn: () => {
+        reads++;
+        return Promise.resolve(new Map());
+      },
+      isMerged: (pr) => {
+        asked.push(pr);
+        return Promise.resolve(false);
+      },
+    });
+    await Promise.all([board.issuesByColumn(), board.issuesByColumn()]);
+    expect(await board.isMerged(6)).toBe(false);
+    expect(await board.isMerged(6)).toBe(false);
+    expect(reads).toBe(1);
+    expect(asked).toEqual([6]);
   });
 });
 
