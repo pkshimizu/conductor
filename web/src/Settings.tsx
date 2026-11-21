@@ -11,7 +11,11 @@ import type {
   ReactElement,
   ReactNode,
 } from "react";
-import { type Role, ROLES } from "../../src/config-schema.js";
+import {
+  DISCORD_TOKEN_ENV,
+  type Role,
+  ROLES,
+} from "../../src/config-schema.js";
 import type { SettingsData, SettingsForm } from "../../src/settings-data.js";
 import {
   CHANNEL_KEYS,
@@ -33,6 +37,7 @@ import {
   cancelSettings,
   discardSettings,
   editForm,
+  needsTokenNotice,
   removeItem,
   reviewSettings,
   selectTab,
@@ -205,6 +210,18 @@ const ROW_LABEL: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 2,
+};
+
+/** トークンが未設定のときの案内 */
+const TOKEN_NOTICE: CSSProperties = {
+  marginTop: 8,
+  padding: "8px 10px",
+  borderRadius: 7,
+  background: "var(--amber-bg)",
+  color: "var(--amber-fg)",
+  border: "1px solid var(--amber-bd)",
+  fontSize: 12,
+  lineHeight: 1.6,
 };
 
 const READONLY_BADGE: CSSProperties = {
@@ -889,6 +906,13 @@ function DiscordTab(props: { ctx: Ctx; data: SettingsData }): ReactElement {
         <span style={READONLY_BADGE}>
           {data.token === "set" ? t.tokenSet : t.tokenUnset}
         </span>
+        {needsTokenNotice(state, data) && (
+          <div role="note" style={TOKEN_NOTICE}>
+            {t.tokenNoticeBefore}
+            <code style={{ fontFamily: MONO }}>{DISCORD_TOKEN_ENV}</code>
+            {t.tokenNoticeAfter}
+          </div>
+        )}
       </Row>
     </Section>
   );

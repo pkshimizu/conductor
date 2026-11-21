@@ -131,6 +131,9 @@ export interface Messages {
   tokenSet: string;
   tokenUnset: string;
   tokenHelp: string;
+  /** トークンが未設定で Discord を使うときの案内。間に環境変数の名前（等幅）を挟む */
+  tokenNoticeBefore: string;
+  tokenNoticeAfter: string;
   secPrompts: string;
   role: string;
   tabGeneral: string;
@@ -311,6 +314,9 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     tokenSet: "設定済み",
     tokenUnset: "未設定",
     tokenHelp: "値は画面に表示しません",
+    tokenNoticeBefore: "Discord のトークンが未設定です。環境変数 ",
+    tokenNoticeAfter:
+      " に設定し、conductor start を起動し直してください（管理画面の「再起動」では反映されません）。",
     secPrompts: "役ごとの指示ファイル",
     role: "役",
     tabGeneral: "基本",
@@ -487,6 +493,10 @@ export const MESSAGES: Readonly<Record<Lang, Messages>> = {
     tokenSet: "Set",
     tokenUnset: "Not set",
     tokenHelp: "The value is never shown",
+    tokenNoticeBefore:
+      "The Discord token is not set. Set the environment variable ",
+    tokenNoticeAfter:
+      " and start conductor start again (the Restart button in this screen does not pick it up).",
     secPrompts: "Role instruction files",
     role: "Role",
     tabGeneral: "General",
