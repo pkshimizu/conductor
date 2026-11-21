@@ -8,7 +8,7 @@
  * Issue を1件ずつ進める常駐ループ（loop.ts）とは別に、要件ごとに呼ばれる。
  */
 import type { Chat } from "./chat.js";
-import type { Config } from "./config.js";
+import type { ChatConfig, Config } from "./config.js";
 import { SECTION } from "./decomposer.js";
 import { parseSections } from "./intake.js";
 import { requirementText } from "./requirement-text.js";
@@ -136,11 +136,11 @@ export function completedMessage(
 /** 要件の要約（要件の本文の最初の行）。見つからなければ要件の投稿 ID で示す */
 async function requirementTitle(
   chat: Chat,
+  chatConfig: ChatConfig,
   requirement: RequirementRecord,
 ): Promise<string> {
   const fallback = `要件 ${requirement.messageId}`;
-  if (requirement.threadId === undefined) return fallback;
-  const text = await requirementText(chat, requirement.threadId);
+  const text = await requirementText(chat, chatConfig, requirement.messageId);
   if (text === undefined) return fallback;
   const first = text
     .split("\n")
@@ -184,7 +184,7 @@ export async function checkProgress(
       : [{ issue: w.number, ...w.status.merged }],
   );
   if (merged.length === work.length) {
-    const title = await requirementTitle(chat, requirement);
+    const title = await requirementTitle(chat, chatConfig, requirement);
     await chat.post(
       chatConfig.channels.notices,
       completedMessage(title, merged),

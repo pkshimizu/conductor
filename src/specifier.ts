@@ -12,7 +12,7 @@ import { roleOutput, type RoleResult, type RoleRun } from "./claude.js";
 import type { Config } from "./config.js";
 import type { Git } from "./git.js";
 import { matchesAny } from "./git.js";
-import { requirementTextFrom } from "./requirement-text.js";
+import { requirementText, threadConversation } from "./requirement-text.js";
 import { threadName } from "./requirements.js";
 import {
   compareMessageIds,
@@ -260,13 +260,12 @@ export async function runSpecifier(
     return { status: "waiting" };
   }
 
-  // 要件の本文は、スレッドの Bot の最初の書き込み（受け取りのときに書いた引用）。
-  // 他の人の書き込みを要件として渡さない。取れなければ起動しない
+  // 要件の本文は、要件チャンネルの元の投稿。取れなければ起動しない
   const botId = await chat.selfId();
-  const requirementText = requirementTextFrom(thread, botId);
-  if (requirementText === undefined) {
+  const text = await requirementText(chat, chatConfig, requirement.messageId);
+  if (text === undefined) {
     deps.log(
-      `要件 ${requirement.messageId}: スレッドに要件の引用が無いので仕様化しません`,
+      `要件 ${requirement.messageId}: 要件チャンネルの元の投稿が読めないので仕様化しません`,
     );
     return { status: "skipped" };
   }
@@ -281,16 +280,16 @@ export async function runSpecifier(
     // PR があればそのブランチの続きから、無ければ main から作る
     if (requirement.specPr === undefined) await git.startBranch(branch);
     else await git.startBranch(branch, branch);
-    return await specify(threadId, requirementText);
+    return await specify(threadId, text);
   } finally {
     // 失敗したときも、作業ツリーに変更を残さない
     await git.discardAll();
   }
 
-  // 関数の宣言では threadId・requirementText の絞り込みが効かないので、引数で受け取る
+  // 関数の宣言では threadId・text の絞り込みが効かないので、引数で受け取る
   async function specify(
     threadId: string,
-    requirementText: string,
+    text: string,
   ): Promise<{ status: SpecifierStatus }> {
     const result = await deps.run({
       role: "specifier",
@@ -299,8 +298,9 @@ export async function runSpecifier(
         .filter(Boolean)
         .join("\n\n"),
       prompt: specifierPrompt({
-        requirement: requirementText,
-        thread,
+        requirement: text,
+        // Discord が入れる空の「スレッドの元の書き込み」は渡さない
+        thread: threadConversation(thread),
         botId,
         allowed,
         ...(requirement.specPr === undefined
@@ -353,7 +353,7 @@ export async function runSpecifier(
       return { status: "unwritten" };
     }
 
-    const name = threadName(requirementText);
+    const name = threadName(text);
     if (written.length > 0) {
       await git.commit(
         written,

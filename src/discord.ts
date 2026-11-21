@@ -138,6 +138,27 @@ export class DiscordChat implements Chat {
     return result;
   }
 
+  async readMessage(
+    channelId: string,
+    messageId: string,
+  ): Promise<ChatMessage | undefined> {
+    if (!(await this.isTarget(channelId))) return undefined;
+    try {
+      const m = await this.request(
+        "GET",
+        `/channels/${seg(channelId)}/messages/${seg(messageId)}`,
+        messageSchema,
+      );
+      return { id: m.id, authorId: m.author.id, text: m.content };
+    } catch (error) {
+      // 消された投稿は無いものとして扱う
+      if (error instanceof DiscordApiError && error.status === 404) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   async createThread(
     channelId: string,
     messageId: string,

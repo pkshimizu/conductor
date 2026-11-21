@@ -26,6 +26,18 @@ describe("MemoryChat", () => {
     expect(await chat.readMessages("c", third)).toEqual([]);
   });
 
+  it("投稿を1件読める。無ければ undefined", async () => {
+    const chat = new MemoryChat();
+    const id = await chat.post("c", "1つ目");
+    expect(await chat.readMessage("c", id)).toEqual({
+      id,
+      authorId: MEMORY_BOT_ID,
+      text: "1つ目",
+    });
+    expect(await chat.readMessage("c", "999")).toBeUndefined();
+    expect(await chat.readMessage("none", id)).toBeUndefined();
+  });
+
   it("リアクションは絵文字ごとにまとまり、同じ人は重ならない", async () => {
     const chat = new MemoryChat();
     const m = chat.addMessage("c", { authorId: "u1", text: "x" });

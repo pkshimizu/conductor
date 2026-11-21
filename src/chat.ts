@@ -27,6 +27,11 @@ export interface Chat {
    * `after`（投稿 ID）を渡すと、その投稿より後の投稿だけを返す（前回の続きから読む）
    */
   readMessages(channelId: string, after?: string): Promise<ChatMessage[]>;
+  /** チャンネルまたはスレッドの投稿を1件読む。無ければ undefined */
+  readMessage(
+    channelId: string,
+    messageId: string,
+  ): Promise<ChatMessage | undefined>;
   /** 投稿からスレッドを作り、スレッドの ID を返す */
   createThread(
     channelId: string,
@@ -110,6 +115,14 @@ export class MemoryChat implements Chat {
     return list
       .filter((m) => after === undefined || BigInt(m.id) > BigInt(after))
       .map((m) => ({ ...m }));
+  }
+
+  async readMessage(
+    channelId: string,
+    messageId: string,
+  ): Promise<ChatMessage | undefined> {
+    const found = this.messages.get(channelId)?.find((m) => m.id === messageId);
+    return found === undefined ? undefined : { ...found };
   }
 
   async createThread(

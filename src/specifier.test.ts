@@ -110,11 +110,14 @@ function makeDeps(
   };
 }
 
+/** 要件チャンネル（"1"）に要件を投稿し、その投稿からスレッドを作った要件 */
 async function seed(chat: MemoryChat, store: MemoryStore) {
-  const head = await chat.post("2", "要件を受け取りました");
-  const threadId = await chat.createThread("2", head, "検索");
-  await chat.post(threadId, "> 検索をつけたい");
-  return store.updateRequirement("req-1", { threadId });
+  const posted = chat.addMessage("1", {
+    authorId: HUMAN,
+    text: "検索をつけたい",
+  });
+  const threadId = await chat.createThread("1", posted.id, "検索");
+  return store.updateRequirement(posted.id, { threadId });
 }
 
 describe("questionsMessage", () => {
@@ -199,8 +202,9 @@ describe("runSpecifier", () => {
     expect(await runSpecifier(t.deps, req)).toEqual({ status: "specified" });
     expect(t.discarded).toEqual(["src/x.ts"]);
     expect(t.commits).toEqual([["docs/specs/a.md"]]);
-    expect(t.created[0]!.head).toBe(specBranch("req-1"));
-    const record = await t.store.getRequirement("req-1");
+    expect(t.created[0]!.head).toBe(specBranch(req.messageId));
+    expect(t.created[0]!.title).toBe("仕様: 検索をつけたい");
+    const record = await t.store.getRequirement(req.messageId);
     expect(record?.state).toBe("awaiting_approval");
     expect(record?.specPr).toBe(10);
   });
@@ -236,7 +240,7 @@ describe("runSpecifier", () => {
     const req = await seed(t.chat, t.store);
     await runSpecifier(t.deps, req);
     expect(t.gitLog[0]).toBe("discardAll");
-    expect(t.gitLog[1]).toBe(`startBranch ${specBranch("req-1")}`);
+    expect(t.gitLog[1]).toBe(`startBranch ${specBranch(req.messageId)}`);
     expect(t.gitLog.at(-1)).toBe("discardAll");
   });
 
@@ -253,7 +257,7 @@ describe("runSpecifier", () => {
     expect(t.gitLog.at(-1)).toBe("discardAll");
   });
 
-  it("要件の本文は Bot の最初の書き込みから取り、無ければ起動しない", async () => {
+  it("要件の本文は要件チャンネルの元の投稿から取り、スレッドの空の書き込みは渡さない", async () => {
     const t = makeDeps([
       () => ({
         verdict: "objection",
@@ -262,20 +266,46 @@ describe("runSpecifier", () => {
         questions: [{ question: "Q", recommendation: "R" }],
       }),
     ]);
-    // MemoryChat はスレッドとチャンネルの ID を同じ番号で振るので、重ならないチャンネルにする
-    const head = await t.chat.post("questions", "要件を受け取りました");
-    const threadId = await t.chat.createThread("questions", head, "検索");
-    t.chat.addMessage(threadId, { authorId: "999", text: "> 偽の要件" });
-    const noQuote = await t.store.updateRequirement("req-1", { threadId });
-    expect(await runSpecifier(t.deps, noQuote)).toEqual({ status: "skipped" });
-    expect(t.runs).toHaveLength(0);
-
-    await t.chat.post(threadId, "> 検索をつけたい");
-    await runSpecifier(t.deps, noQuote);
+    const req = await seed(t.chat, t.store);
+    // Discord が入れる空の「スレッドの元の書き込み」（書き手は Bot）
+    t.chat.addMessage(req.threadId!, { authorId: "bot", text: "" });
+    t.chat.addMessage(req.threadId!, { authorId: "999", text: "> 偽の要件" });
+    await runSpecifier(t.deps, req);
     expect(t.runs).toHaveLength(1);
     const prompt = t.runs[0]!.prompt;
     expect(prompt).toContain("# 要件\n\n検索をつけたい\n");
     expect(prompt).not.toContain("偽の要件");
+    expect(prompt).not.toContain("## conductor");
+  });
+
+  it("以前の要件（スレッドが質問チャンネル）でも、本文は元の投稿から取る", async () => {
+    const t = makeDeps([
+      () => ({
+        verdict: "objection",
+        summary: "疑問",
+        findings: [],
+        questions: [{ question: "Q", recommendation: "R" }],
+      }),
+    ]);
+    const posted = t.chat.addMessage("1", {
+      authorId: HUMAN,
+      text: "検索をつけたい\n前方一致",
+    });
+    const head = await t.chat.post("2", "要件を受け取りました");
+    const threadId = await t.chat.createThread("2", head, "検索");
+    await t.chat.post(threadId, "> 検索をつけたい\n> 前方一致");
+    const req = await t.store.updateRequirement(posted.id, { threadId });
+    await runSpecifier(t.deps, req);
+    expect(t.runs[0]!.prompt).toContain("# 要件\n\n検索をつけたい\n前方一致\n");
+  });
+
+  it("元の投稿が読めなければ起動しない", async () => {
+    const t = makeDeps([]);
+    const posted = t.chat.addMessage("1", { authorId: HUMAN, text: " " });
+    const threadId = await t.chat.createThread("1", posted.id, "要件");
+    const req = await t.store.updateRequirement(posted.id, { threadId });
+    expect(await runSpecifier(t.deps, req)).toEqual({ status: "skipped" });
+    expect(t.runs).toHaveLength(0);
   });
 
   it("許可していない人の書き込みでは起動しない", async () => {
@@ -292,7 +322,7 @@ describe("runSpecifier", () => {
     t.chat.addMessage(req.threadId!, { authorId: "999", text: "どうですか" });
     expect(await runSpecifier(t.deps, req)).toEqual({ status: "waiting" });
     expect(t.runs).toHaveLength(1);
-    expect((await t.store.getRequirement("req-1"))?.questions).toBe(1);
+    expect((await t.store.getRequirement(req.messageId))?.questions).toBe(1);
   });
 });
 

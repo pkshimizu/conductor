@@ -176,11 +176,12 @@ describe("runDecomposer", () => {
   async function setup(replies: DecomposerOutput["issues"][]) {
     const chat = new MemoryChat();
     const store = new MemoryStore(() => new Date("2026-11-19T00:00:00.000Z"));
-    // チャンネルの ID はスレッドの ID（連番）とぶつからない名前にする
-    const head = await chat.post("requirements", "要件を受け取りました");
-    const threadId = await chat.createThread("requirements", head, "要件");
-    await chat.post(threadId, "> 検索したい");
-    const record = await store.updateRequirement("100", {
+    // 要件チャンネル（"1"）の元の投稿からスレッドを作る。
+    // Discord が入れる空の「スレッドの元の書き込み」も置く
+    const posted = chat.addMessage("1", { authorId: "u1", text: "検索したい" });
+    const threadId = await chat.createThread("1", posted.id, "要件");
+    chat.addMessage(threadId, { authorId: chat.botId, text: "" });
+    const record = await store.updateRequirement(posted.id, {
       threadId,
       specPr: 9,
       state: "working",
@@ -223,7 +224,9 @@ describe("runDecomposer", () => {
     expect(t.board.created[0]!.body).toContain(
       "https://github.com/me/app/blob/main/docs/specs/a.md",
     );
-    expect((await t.store.getRequirement("100"))?.workIssues).toEqual([11]);
+    expect(
+      (await t.store.getRequirement(t.record.messageId))?.workIssues,
+    ).toEqual([11]);
   });
 
   it("作業中でない要件・作業用 Issue がある要件は何もしない", async () => {
@@ -242,7 +245,9 @@ describe("runDecomposer", () => {
       status: "blocked",
     });
     expect(t.runs).toEqual([]);
-    expect((await t.store.getRequirement("100"))?.state).toBe("blocked");
+    expect((await t.store.getRequirement(t.record.messageId))?.state).toBe(
+      "blocked",
+    );
     const last = (t.chat.messages.get(t.threadId) ?? []).at(-1);
     expect(last?.text).toContain("仕様ファイル");
   });
@@ -258,7 +263,7 @@ describe("runDecomposer", () => {
     };
 
     await expect(runDecomposer(t.deps, t.record)).rejects.toThrow("通信の失敗");
-    const half = (await t.store.getRequirement("100"))!;
+    const half = (await t.store.getRequirement(t.record.messageId))!;
     expect(half.workIssues).toEqual([]);
     expect(half.decomposition?.created.map((c) => c.key)).toEqual(["a"]);
 
@@ -273,7 +278,7 @@ describe("runDecomposer", () => {
     expect(t.board.created[1]!.body).toContain("- #11");
     expect(t.board.created[2]!.body).toContain("- #12");
     expect(t.board.added).toEqual([11, 12, 13]);
-    const done = (await t.store.getRequirement("100"))!;
+    const done = (await t.store.getRequirement(t.record.messageId))!;
     expect(done.workIssues).toEqual([11, 12, 13]);
     expect(done.decomposition).toBeUndefined();
     const lists = (t.chat.messages.get(t.threadId) ?? []).filter((m) =>
@@ -292,11 +297,13 @@ describe("runDecomposer", () => {
       return add(issue);
     };
     await expect(runDecomposer(t.deps, t.record)).rejects.toThrow();
-    const half = (await t.store.getRequirement("100"))!;
+    const half = (await t.store.getRequirement(t.record.messageId))!;
     expect(await runDecomposer(t.deps, half)).toEqual({ status: "decomposed" });
     expect(t.board.created).toHaveLength(1);
     expect(t.board.added).toEqual([11]);
-    expect((await t.store.getRequirement("100"))?.workIssues).toEqual([11]);
+    expect(
+      (await t.store.getRequirement(t.record.messageId))?.workIssues,
+    ).toEqual([11]);
   });
 
   it("一覧の書き込みに失敗したら分解済みにせず、次は一覧の書き込みだけをやり直す", async () => {
@@ -311,7 +318,7 @@ describe("runDecomposer", () => {
       return post(channelId, text);
     };
     await expect(runDecomposer(t.deps, t.record)).rejects.toThrow();
-    const half = (await t.store.getRequirement("100"))!;
+    const half = (await t.store.getRequirement(t.record.messageId))!;
     expect(half.workIssues).toEqual([]);
 
     expect(await runDecomposer(t.deps, half)).toEqual({ status: "decomposed" });
@@ -320,7 +327,9 @@ describe("runDecomposer", () => {
     const last = (t.chat.messages.get(t.threadId) ?? []).at(-1);
     expect(last?.text).toContain("1. #11 a を作る");
     expect(last?.text).toContain("2. #12 b を作る");
-    expect((await t.store.getRequirement("100"))?.workIssues).toEqual([11, 12]);
+    expect(
+      (await t.store.getRequirement(t.record.messageId))?.workIssues,
+    ).toEqual([11, 12]);
   });
 
   it("上限（rejections + 1 回）までやり直し、直らなければ止める", async () => {

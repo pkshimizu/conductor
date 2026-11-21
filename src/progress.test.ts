@@ -64,14 +64,13 @@ async function setup(
 ) {
   const chat = new MemoryChat("bot");
   const store = new MemoryStore();
-  // スレッドの ID（数字）と重ならないチャンネル名にする
-  const threadId = await chat.createThread(
-    "questions",
-    await chat.post("questions", "要件を受け取りました"),
-    "検索",
-  );
-  await chat.post(threadId, "> 検索をつけたい\n> 前方一致で");
-  const requirement = await store.updateRequirement("10", {
+  // 要件チャンネル（"1"）の元の投稿からスレッドを作る
+  const posted = chat.addMessage("1", {
+    authorId: "u1",
+    text: "検索をつけたい\n前方一致で",
+  });
+  const threadId = await chat.createThread("1", posted.id, "検索");
+  const requirement = await store.updateRequirement(posted.id, {
     threadId,
     state: "working",
     workIssues,
@@ -195,7 +194,9 @@ describe("checkProgress", () => {
     expect(notices[0]?.text).toContain("検索をつけたい");
     expect(notices[0]?.text).not.toContain("前方一致");
     expect(notices[0]?.text).toContain("#12");
-    expect((await t.store.getRequirement("10"))?.state).toBe("done");
+    expect((await t.store.getRequirement(t.requirement.messageId))?.state).toBe(
+      "done",
+    );
     expect(t.moved).toEqual([]);
   });
 

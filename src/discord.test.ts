@@ -73,6 +73,23 @@ describe("DiscordChat", () => {
     ]);
   });
 
+  it("投稿を1件読む。無い投稿・対象外のチャンネルは undefined", async () => {
+    const { fake, chat } = setup();
+    const id = fake.addMessage(CHANNELS.requirements, {
+      authorId: "1",
+      content: "要件\n続き",
+    });
+    expect(await chat.readMessage(CHANNELS.requirements, id)).toEqual({
+      id,
+      authorId: "1",
+      text: "要件\n続き",
+    });
+    expect(
+      await chat.readMessage(CHANNELS.requirements, "123456"),
+    ).toBeUndefined();
+    expect(await chat.readMessage("404", id)).toBeUndefined();
+  });
+
   it("無いチャンネルは対象外として空を返す", async () => {
     const { chat } = setup();
     expect(await chat.readMessages("404")).toEqual([]);
