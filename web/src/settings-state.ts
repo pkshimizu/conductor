@@ -51,6 +51,17 @@ export function hasChanges(state: SettingsState, data: SettingsData): boolean {
   return diffSettings(data.form, state.form).length > 0;
 }
 
+/**
+ * トークンを環境変数に設定するよう案内を出すか。
+ * トークンが未設定で、入力中（保存前）の「Discord を使う」がオンのとき
+ */
+export function needsTokenNotice(
+  state: SettingsState,
+  data: SettingsData,
+): boolean {
+  return data.token === "unset" && state.form.chat.enabled;
+}
+
 /** 入力中の値に誤りがあるか */
 export function hasErrors(state: SettingsState): boolean {
   return Object.keys(validateSettings(state.form)).length > 0;

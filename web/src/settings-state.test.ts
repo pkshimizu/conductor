@@ -7,6 +7,7 @@ import {
   discardSettings,
   editForm,
   initSettings,
+  needsTokenNotice,
   removeItem,
   reviewSettings,
   setDraft,
@@ -127,5 +128,13 @@ describe("settings-state", () => {
       () => {},
     );
     expect(final.failed).toBe(true);
+  });
+
+  it("トークンが未設定で入力中の「Discord を使う」がオンのときだけ案内を出す", () => {
+    const on = editForm(initSettings(DATA), (f) => (f.chat.enabled = true));
+    expect(needsTokenNotice(initSettings(DATA), DATA)).toBe(false);
+    expect(needsTokenNotice(on, DATA)).toBe(true);
+    const set: SettingsData = { ...DATA, token: "set" };
+    expect(needsTokenNotice(on, set)).toBe(false);
   });
 });
