@@ -392,7 +392,7 @@ export async function runDecomposer(
       return { status: "decomposed" };
     }
     deps.log(
-      `${name}: 分解役の結果に誤りがあります（${n}/${attempts} 回目）: ${problems.join(" / ")}`,
+      `${name}: 分解エージェントの結果に誤りがあります（${n}/${attempts} 回目）: ${problems.join(" / ")}`,
     );
     retry = { issues, problems };
   }

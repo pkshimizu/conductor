@@ -607,7 +607,7 @@ async function grant(
   const name = `#${record.issue}`;
   const role = record.role;
   if (!isRole(role)) {
-    throw new Error(`役の名前が設定にありません: ${role}`);
+    throw new Error(`エージェントの名前が設定にありません: ${role}`);
   }
   const allow = config.roles[role].allow;
   let pr = record.pr;
