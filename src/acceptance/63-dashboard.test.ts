@@ -505,7 +505,7 @@ describe("Issue #63: 管理画面：ダッシュボード", () => {
     expect(active.text).toContain(ACTIVE.title);
     expect(active.text).toMatch(/ブランチ\s*conductor\/issue-12/);
     expectProgress(active.html, "実装");
-    expect(active.text).toContain("実装役");
+    expect(active.text).toContain("実装エージェント");
     expect(active.text).toMatch(/経過\s*1分0{1,2}秒/);
     expect(active.text).toMatch(/差し戻し\s*1(\s*\/\s*3)?/);
     expect(active.text).toMatch(/異議\s*1(\s*\/\s*2)?/);
@@ -839,7 +839,7 @@ describe("Issue #63: 管理画面：ダッシュボード", () => {
     const shown1 = await render(opened.dashboard as DashboardData, at(5_000));
     const active1 = section(shown1.html, "処理中の Issue");
     expectProgress(active1.html, "実装");
-    expect(active1.text).toContain("実装役");
+    expect(active1.text).toContain("実装エージェント");
     expect(section(shown1.html, "稼働状況").text).toMatch(
       /次の確認まで\s*25\s*秒/,
     );
@@ -868,7 +868,7 @@ describe("Issue #63: 管理画面：ダッシュボード", () => {
     const shown2 = await render(pushed.dashboard as DashboardData, at(50_000));
     const active2 = section(shown2.html, "処理中の Issue");
     expectProgress(active2.html, "CI");
-    expect(active2.text).not.toContain("実装役");
+    expect(active2.text).not.toContain("実装エージェント");
     expect(active2.text).toMatch(/経過\s*10秒/);
     const status2 = section(shown2.html, "稼働状況");
     expect(status2.text).toMatch(/次の確認まで\s*20\s*秒/);
