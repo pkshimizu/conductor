@@ -718,7 +718,7 @@ describe("Issue #67: 管理画面：処理中の作業の中断", () => {
       expect(dialog, "中断のダイアログ").toBeDefined();
       expect(textOf(dialog!)).toContain("#12 の作業を中断しますか？");
       expect(textOf(dialog!)).toContain(
-        "動作中の実装役を止め、Issue を Blocked 列に移します。",
+        "動作中の実装エージェントを止め、Issue を Blocked 列に移します。",
       );
       expect(buttonsOf(dialog!)).toEqual(
         expect.arrayContaining(["キャンセル", "中断する"]),

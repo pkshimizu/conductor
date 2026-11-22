@@ -605,7 +605,7 @@ function dialogOf(html: string): string | undefined {
 const TAB_LABELS = {
   general: "基本",
   commands: "コマンドとファイル",
-  perms: "役の許可",
+  perms: "エージェントの許可",
   discord: "窓口（Discord）",
   prompts: "指示ファイル",
 } as const;
@@ -629,11 +629,11 @@ const COMMAND_KEYS = [
 ] as const;
 
 const ROLE_LABELS: Record<Role, string> = {
-  tester: "テスト役",
-  implementer: "実装役",
-  reviewer: "レビュー役",
-  specifier: "仕様化役",
-  decomposer: "分解役",
+  tester: "テストエージェント",
+  implementer: "実装エージェント",
+  reviewer: "レビューエージェント",
+  specifier: "仕様化エージェント",
+  decomposer: "分解エージェント",
 };
 
 describe("Issue #68: 管理画面：設定", () => {
@@ -677,11 +677,15 @@ describe("Issue #68: 管理画面：設定", () => {
     expect(control(general, "Blocked").value).toBe("Blocked");
     expect(control(general, "差し戻しの上限").value).toBe("4");
     expect(control(general, "異議の上限").value).toBe("2");
-    expect(control(general, "レビュー役を同時に動かす数").value).toBe("5");
+    expect(control(general, "レビューエージェントを同時に動かす数").value).toBe(
+      "5",
+    );
     expect(radio(general, "auto").checked).toBe(true);
     expect(radio(general, "human").checked).toBe(false);
     expect(control(general, "GitHub を確認する間隔").value).toBe("45");
-    expect(control(general, "役が書く文章の言語").value).toBe("English");
+    expect(control(general, "エージェントが書く文章の言語").value).toBe(
+      "English",
+    );
     expect(control(general, "画面の撮影を保存するフォルダ").value).toBe(
       "shots/acceptance",
     );
@@ -717,7 +721,7 @@ describe("Issue #68: 管理画面：設定", () => {
 
     // Then: 役の許可のタブ
     const perms = await renderSettings(data, { tab: "perms" });
-    expect(tab(perms, "役の許可").selected).toBe(true);
+    expect(tab(perms, "エージェントの許可").selected).toBe(true);
     const permsText = textOf(perms);
     for (const label of Object.values(ROLE_LABELS)) {
       expect(permsText).toContain(label);
@@ -805,9 +809,9 @@ describe("Issue #68: 管理画面：設定", () => {
       ),
       ["差し戻しの上限", "6"],
       ["異議の上限", "4"],
-      ["レビュー役を同時に動かす数", "2"],
+      ["レビューエージェントを同時に動かす数", "2"],
       ["GitHub を確認する間隔", "120"],
-      ["役が書く文章の言語", "日本語"],
+      ["エージェントが書く文章の言語", "日本語"],
       ["画面の撮影を保存するフォルダ", ""],
     ];
     for (const [label, value] of generalFields) {
@@ -827,13 +831,15 @@ describe("Issue #68: 管理画面：設定", () => {
       expect(c.enabled, `${k} を変更できる`).toBe(true);
       expect(c.value ?? "", k).toBe(form.commands[k]);
     }
-    expect(textOf(commands)).toContain("実装役に変えさせないファイル");
+    expect(textOf(commands)).toContain(
+      "実装エージェントに変えさせないファイル",
+    );
     expect(control(commands, "glob を追加").enabled).toBe(true);
     expect(hasRemove(commands, "src/acceptance/**")).toBe(true);
     expect(hasRemove(commands, "tests/e2e/**")).toBe(true);
 
     const perms = await renderSettings(data, { tab: "perms", form });
-    expect(textOf(perms)).toContain("役ごとの追加許可");
+    expect(textOf(perms)).toContain("エージェントごとの追加許可");
     for (const label of Object.values(ROLE_LABELS)) {
       expect(control(perms, `${label}に操作を追加`).enabled, label).toBe(true);
     }
@@ -1033,7 +1039,7 @@ describe("Issue #68: 管理画面：設定", () => {
     const firstText = textOf(first);
 
     // Then: 中身を見られる
-    expect(firstText).toContain("役ごとの指示ファイル");
+    expect(firstText).toContain("エージェントごとの指示ファイル");
     expect(firstText).toContain("見るだけ");
     expect(firstText).toContain("acceptance.md");
     expect(firstText).toContain("objection.md");
@@ -1105,7 +1111,7 @@ describe("Issue #68: 管理画面：設定", () => {
       {
         name: "limits.reviewers が整数でない",
         tab: "general",
-        label: "レビュー役を同時に動かす数",
+        label: "レビューエージェントを同時に動かす数",
         message: "1 以上の整数を入れてください",
         edit: (f) => (f.limits.reviewers = "2.5"),
       },
@@ -1126,7 +1132,7 @@ describe("Issue #68: 管理画面：設定", () => {
       {
         name: "language が空白だけ",
         tab: "general",
-        label: "役が書く文章の言語",
+        label: "エージェントが書く文章の言語",
         message: "入力してください",
         edit: (f) => (f.language = "  "),
       },
@@ -1240,7 +1246,7 @@ describe("Issue #68: 管理画面：設定", () => {
     expect(tab(page, "基本").inner).toContain("7件の誤り");
     expect(tab(page, "コマンドとファイル").inner).toContain("2件の誤り");
     expect(tab(page, "窓口（Discord）").inner).toContain("2件の誤り");
-    expect(tab(page, "役の許可").inner).not.toContain("件の誤り");
+    expect(tab(page, "エージェントの許可").inner).not.toContain("件の誤り");
     expect(tab(page, "指示ファイル").inner).not.toContain("件の誤り");
     expect(button(page, "差分を確認して保存").disabled).toBe(true);
 
@@ -1289,7 +1295,7 @@ describe("Issue #68: 管理画面：設定", () => {
     // Then: 変更のあるタブには印を出す
     const page = await renderSettings(data, changed);
     expect(tab(page, "基本").inner).toContain("変更あり");
-    expect(tab(page, "役の許可").inner).toContain("変更あり");
+    expect(tab(page, "エージェントの許可").inner).toContain("変更あり");
     expect(tab(page, "コマンドとファイル").inner).not.toContain("変更あり");
     expect(tab(page, "窓口（Discord）").inner).not.toContain("変更あり");
     expect(tab(page, "指示ファイル").inner).not.toContain("変更あり");

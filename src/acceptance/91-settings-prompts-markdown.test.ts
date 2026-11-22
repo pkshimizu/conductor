@@ -510,7 +510,7 @@ describe("Issue #91: 指示ファイルのタブで Markdown を整形して見�
     expect(squash(textOf(fileHtml))).toContain("☐a");
 
     // When: 役を選び直す
-    const byRole = await click(data, sourceState, "実装役");
+    const byRole = await click(data, sourceState, "実装エージェント");
     // Then: prompt がその役で置き換わり、source は残らない
     expect(byRole.prompt?.role).toBe("implementer");
     expect(byRole.prompt).not.toHaveProperty("source");

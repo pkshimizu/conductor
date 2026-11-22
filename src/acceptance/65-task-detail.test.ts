@@ -167,14 +167,14 @@ const TIMELINE = [
     role: "tester",
     verdict: "approve",
     text: "受け入れテストを3件書きました",
-    roleLabel: "テスト役",
+    roleLabel: "テストエージェント",
     result: "承認",
   },
   {
     role: "implementer",
     verdict: "objection",
     text: "AC2 の並び順の決め方が読み取れません",
-    roleLabel: "実装役",
+    roleLabel: "実装エージェント",
     result: "異議",
   },
   {
@@ -188,7 +188,7 @@ const TIMELINE = [
     role: "reviewer",
     verdict: "reject",
     text: LONG_TEXT,
-    roleLabel: "レビュー役",
+    roleLabel: "レビューエージェント",
     result: "差し戻し",
   },
   {
@@ -823,7 +823,7 @@ describe("Issue #65: 管理画面：タスク詳細", () => {
     expect(shown2.text).not.toContain(NO_TIMELINE);
     const list = articles(shown2.html);
     expect(list).toHaveLength(1);
-    expect(list[0]!.text).toContain("テスト役");
+    expect(list[0]!.text).toContain("テストエージェント");
     expect(list[0]!.text).toContain("承認");
     expect(list[0]!.text).toContain(TIMELINE[0].text);
     expect(list[0]!.text).toMatch(stampPattern(at(4 * HOUR)));

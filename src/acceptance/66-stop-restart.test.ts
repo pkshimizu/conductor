@@ -457,13 +457,13 @@ function expectDialog(
 
 const STOP_DIALOG = {
   title: "conductor を停止しますか？",
-  body: "GitHub の確認と役の実行を止めます。再開するには「再起動」を押してください。",
+  body: "GitHub の確認とエージェントの実行を止めます。再開するには「再起動」を押してください。",
   cancel: "キャンセル",
   ok: "停止する",
 };
 const RESTART_DIALOG = {
   title: "conductor を再起動しますか？",
-  body: "動作中の役はいったん止まります。設定の変更は再起動のあとに反映されます。",
+  body: "動作中のエージェントはいったん止まります。設定の変更は再起動のあとに反映されます。",
   cancel: "キャンセル",
   ok: "再起動する",
 };
