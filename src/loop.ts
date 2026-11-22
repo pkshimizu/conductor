@@ -226,13 +226,13 @@ function trackRoles(
 
 /** 中断の文に出す役の名前 */
 export const ROLE_LABELS: Readonly<Record<ActiveRole, string>> = {
-  tester: "テスト役",
-  implementer: "実装役",
+  tester: "テストエージェント",
+  implementer: "実装エージェント",
   ci: "CI の確認",
-  reviewer: "レビュー役",
+  reviewer: "レビューエージェント",
   merge: "マージ",
-  specifier: "仕様化役",
-  decomposer: "分解役",
+  specifier: "仕様化エージェント",
+  decomposer: "分解エージェント",
 };
 
 /**
@@ -358,7 +358,7 @@ export function abortWorkNote(
     case undefined:
       // テスト役は書きかけのテストを残さない（続けるときは最初から書き直す）
       return role === "tester"
-        ? "テスト役の書きかけの変更は残していません。続けるときはテスト役が最初からやり直します。"
+        ? "テストエージェントの書きかけの変更は残していません。続けるときはテストエージェントが最初からやり直します。"
         : undefined;
   }
 }

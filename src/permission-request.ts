@@ -39,11 +39,11 @@ const DENIED_LIMIT = 300;
 
 /** 書き込みに出す役の名前 */
 export const ROLE_NAMES: Readonly<Record<string, string>> = {
-  tester: "テスト役",
-  implementer: "実装役",
-  reviewer: "レビュー役",
-  specifier: "仕様化役",
-  decomposer: "分解役",
+  tester: "テストエージェント",
+  implementer: "実装エージェント",
+  reviewer: "レビューエージェント",
+  specifier: "仕様化エージェント",
+  decomposer: "分解エージェント",
 };
 
 export function roleName(role: string): string {

@@ -352,7 +352,7 @@ export async function runTester(
       await blockIssue(deps, issue.number, {
         body: body.join("\n"),
         reason: [
-          "受け入れ条件が曖昧で、テスト役が受け入れテストを書けませんでした。次の点を教えてください。",
+          "受け入れ条件が曖昧で、テストエージェントが受け入れテストを書けませんでした。次の点を教えてください。",
           ...questions.map((q) => `- ${q}`),
         ].join("\n"),
       });
@@ -386,7 +386,7 @@ export async function runTester(
             written,
             deps.readFile,
           )
-        : [`テスト役が ${out.verdict} を返しました: ${out.summary}`];
+        : [`テストエージェントが ${out.verdict} を返しました: ${out.summary}`];
     if (written.length === 0)
       problems.push("保護対象のファイルが1つも書かれていません");
     if (formatProblem) problems.push(formatProblem);
@@ -426,7 +426,7 @@ export async function runTester(
       await blockIssue(deps, issue.number, {
         body: failedComment(problems, columns.ready),
         reason: [
-          "テスト役が受け入れテストを正しく書けませんでした。",
+          "テストエージェントが受け入れテストを正しく書けませんでした。",
           ...problems.map((p) => `- ${p}`),
         ].join("\n"),
       });

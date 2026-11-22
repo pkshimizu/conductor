@@ -216,7 +216,7 @@ export function objectionComment(
   limit: number,
 ): string {
   return [
-    `実装役が受け入れテストの不備を指摘しました（異議 ${objections}/${limit} 回目）。テスト役に次の指摘を渡して、テストを書き直します。`,
+    `実装エージェントが受け入れテストの不備を指摘しました（異議 ${objections}/${limit} 回目）。テストエージェントに次の指摘を渡して、テストを書き直します。`,
     "",
     ...bullets(objectionFindings(out)),
   ].join("\n");
@@ -228,7 +228,7 @@ export function objectionLimitComment(
   ready: string,
 ): string {
   return [
-    `異議が上限（${limit} 回）を超えたため、Blocked に移しました。最後の実装役の指摘:`,
+    `異議が上限（${limit} 回）を超えたため、Blocked に移しました。最後の実装エージェントの指摘:`,
     "",
     ...bullets(objectionFindings(out)),
     "",
@@ -238,7 +238,7 @@ export function objectionLimitComment(
 
 export function pullRequestBody(issue: TesterIssue, out: ImplementerOutput) {
   return [
-    `Issue #${issue.number} を conductor の実装役が実装しました。`,
+    `Issue #${issue.number} を conductor の実装エージェントが実装しました。`,
     "",
     "## 実装の要約",
     "",
@@ -467,7 +467,7 @@ async function implementAndPush(
       await blockIssue(deps, issue.number, {
         body: objectionLimitComment(out, limit, columns.ready),
         reason: [
-          `実装役の異議が上限（${limit} 回）を超えました。受け入れテストの問題:`,
+          `実装エージェントの異議が上限（${limit} 回）を超えました。受け入れテストの問題:`,
           ...objectionFindings(out).map((f) => `- ${f}`),
         ].join("\n"),
       });
@@ -526,7 +526,9 @@ async function implementAndPush(
   }
   if (problems.length > 0) return reject(problems);
   if (out.verdict !== "approve") {
-    return reject([`実装役が ${out.verdict} を返しました: ${out.summary}`]);
+    return reject([
+      `実装エージェントが ${out.verdict} を返しました: ${out.summary}`,
+    ]);
   }
   return { out };
 }

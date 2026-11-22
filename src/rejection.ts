@@ -38,7 +38,7 @@ export function rejectionComment(
   limit: number,
 ): string {
   return [
-    `${source}で差し戻しました（${rejections}/${limit} 回目）。実装役に次の指摘を渡します。`,
+    `${source}で差し戻しました（${rejections}/${limit} 回目）。実装エージェントに次の指摘を渡します。`,
     "",
     ...findings.map((f) => `- ${f.replace(/\n/g, "\n  ")}`),
   ].join("\n");

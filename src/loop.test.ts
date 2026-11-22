@@ -8,6 +8,7 @@ import { cachedStatusOf } from "./progress.js";
 import {
   abortComment,
   abortReason,
+  abortWorkNote,
   MAX_FAILURES,
   runLoop,
   newLoopState,
@@ -639,7 +640,10 @@ describe("管理画面からの中断（StepAborter）", () => {
 
   it("役の名前を中断の理由に入れる", () => {
     expect(abortReason("implementer")).toBe(
-      "管理画面から中断しました（実装役の作業中）。",
+      "管理画面から中断しました（実装エージェントの作業中）。",
+    );
+    expect(abortWorkNote("tester", undefined)).toBe(
+      "テストエージェントの書きかけの変更は残していません。続けるときはテストエージェントが最初からやり直します。",
     );
     expect(abortReason(undefined)).toBe("管理画面から中断しました。");
   });
