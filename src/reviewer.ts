@@ -180,7 +180,7 @@ export function reviewObjectionComment(
   ready: string,
 ): string {
   return [
-    "レビュー役が、受け入れテストと受け入れ条件の食い違いを指摘しました。確認してください。",
+    "レビューエージェントが、受け入れテストと受け入れ条件の食い違いを指摘しました。確認してください。",
     "",
     out.summary,
     ...out.findings.map((f) => `- ${formatFinding(f)}`),
@@ -395,7 +395,7 @@ export async function runReviewer(
     await blockIssue(deps, issue.number, {
       body: reviewObjectionComment(out, columns.ready),
       reason: [
-        "レビュー役が、受け入れテストと受け入れ条件の食い違いを指摘しました。",
+        "レビューエージェントが、受け入れテストと受け入れ条件の食い違いを指摘しました。",
         out.summary,
         ...out.findings.map((f) => `- ${formatFinding(f)}`),
       ].join("\n"),

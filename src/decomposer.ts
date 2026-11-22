@@ -302,7 +302,7 @@ export function blockedMessage(
   return [
     attempts === 0
       ? "作業用 Issue に分けられないため、この要件を止めました。理由:"
-      : `分解役を ${attempts} 回起動しても作業用 Issue に分けられなかったため、この要件を止めました。最後の誤り:`,
+      : `分解エージェントを ${attempts} 回起動しても作業用 Issue に分けられなかったため、この要件を止めました。最後の誤り:`,
     "",
     ...problems.map((p) => `- ${p}`),
     "",
@@ -392,7 +392,7 @@ export async function runDecomposer(
       return { status: "decomposed" };
     }
     deps.log(
-      `${name}: 分解役の結果に誤りがあります（${n}/${attempts} 回目）: ${problems.join(" / ")}`,
+      `${name}: 分解エージェントの結果に誤りがあります（${n}/${attempts} 回目）: ${problems.join(" / ")}`,
     );
     retry = { issues, problems };
   }

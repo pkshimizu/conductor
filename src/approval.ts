@@ -55,7 +55,7 @@ export type ApprovalResult =
 
 export function approvalRequestComment(pr: number): string {
   return [
-    `PR #${pr} はレビュー役が承認しました。マージしてよいか確認してください。`,
+    `PR #${pr} はレビューエージェントが承認しました。マージしてよいか確認してください。`,
     "",
     `- マージする: PR に \`${APPROVE_COMMAND}\` とコメント`,
     `- 差し戻す: 直してほしい点を PR にコメント（行へのコメントも可）してから \`${REJECT_COMMAND}\` とコメント`,
@@ -248,7 +248,7 @@ async function rejectByHuman(
   await board.comment(
     issue,
     [
-      "人の差し戻しを受け付けました（上限の回数には数えません）。実装役に次の指摘を渡します。",
+      "人の差し戻しを受け付けました（上限の回数には数えません）。実装エージェントに次の指摘を渡します。",
       "",
       ...list.map((f) => `- ${f.replace(/\n/g, "\n  ")}`),
       "",

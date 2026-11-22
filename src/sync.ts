@@ -29,7 +29,7 @@ export type SyncResult =
 
 export function conflictFinding(pr: number, files: readonly string[]): string {
   return [
-    `PR #${pr} が main と衝突したため、指揮役が main を取り込みました。`,
+    `PR #${pr} が main と衝突したため、指揮エージェントが main を取り込みました。`,
     `次のファイルに衝突のしるし（<<<<<<< / ======= / >>>>>>>）が残っています。両方の変更を生かして解消し、しるしを消してください: ${files.join("、")}`,
   ].join("\n");
 }
@@ -70,7 +70,7 @@ export async function syncMain(
     await board.moveIssue(issue, columns.testing);
     await board.comment(
       issue,
-      `${finding}\n\nテスト役に戻します（差し戻しの上限には数えません）。`,
+      `${finding}\n\nテストエージェントに戻します（差し戻しの上限には数えません）。`,
     );
     return { status: "protected-conflict", files: protectedFiles };
   }
@@ -106,7 +106,7 @@ export async function syncMain(
   await board.moveIssue(issue, columns.implementing);
   await board.comment(
     issue,
-    `${finding}\n\n実装役に直させます（差し戻しの上限には数えません）。`,
+    `${finding}\n\n実装エージェントに直させます（差し戻しの上限には数えません）。`,
   );
   return { status: "conflict", files };
 }
