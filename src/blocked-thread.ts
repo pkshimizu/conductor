@@ -5,6 +5,8 @@
  * - 次の確認で、質問チャンネルにスレッドを作り、止まった理由と Issue へのリンクを書いて、許可した人にメンションする
  * - 許可した人がスレッドに方針を書いたら、方針を Issue にコメントで書き写し、Ready に戻し、スレッドをアーカイブする
  * - 人が GitHub で直接 Issue を Blocked の列から出したら、スレッドをアーカイブする
+ * - Blocked の列から出たら（どちらの経路でも）、差し戻しと反論の回数を 0 に戻す
+ *   （窓口が無いときも、releaseUnblocked が止まった理由の記録から Blocked の列を出たことを見つけて戻す）
  * - 仕様の作り直し（respec があり、要件の作業用 Issue のとき）: 方針を仕様化役に渡し、
  *   仕様の変更が要らなければ上と同じく書き写す。要れば仕様の PR を作って ✅ を待ち、
  *   ✅ が付いたらマージして変更点を Issue に書き写し、Ready に戻してスレッドをアーカイブする（respec.ts）
@@ -190,6 +192,7 @@ export async function followBlockedThread(
     if (record.threadId !== undefined) {
       await chat.archiveThread(record.threadId);
     }
+    await resetCounts(store, key);
     await store.deleteBlockedThread(key);
     deps.log(
       `${name}: Blocked の列から出ていたので、スレッドを閉じました（記録を消しました）`,
@@ -290,6 +293,7 @@ export async function followBlockedThread(
     if (last !== undefined) await store.setReadPosition(threadId, last.id);
   }
 
+  await resetCounts(store, key);
   await board.moveIssue(record.issue, columns.ready);
   await chat.post(
     threadId,
@@ -300,6 +304,40 @@ export async function followBlockedThread(
   await store.deleteBlockedThread(key);
   deps.log(`${name}: スレッドの方針を書き写し、${columns.ready} に戻しました`);
   return { status: "resumed" };
+}
+
+/**
+ * Blocked の列から出た Issue の、差し戻しと反論の回数を 0 に戻す（上限のまま待ち続けないため）。
+ * Issue の記録が無ければ作らない
+ */
+export async function resetCounts(store: Store, key: IssueKey): Promise<void> {
+  const current = await store.get(key);
+  if (current === undefined) return;
+  if (current.rejections === 0 && current.objections === 0) return;
+  await store.update(key, { rejections: 0, objections: 0 });
+}
+
+/**
+ * Blocked にした（blockedReason を残した）Issue のうち、今 Blocked の列に無いものを見つけ、
+ * 差し戻しと反論の回数を 0 に戻して、止まった理由を消す（窓口の有無によらない）。
+ * 人が GitHub で Issue を Blocked の列から直接動かしたときに、上限のまま待ち続けないため。
+ * blocked は今 Blocked の列にある Issue の番号。戻した Issue の番号を返す
+ */
+export async function releaseUnblocked(
+  store: Store,
+  repo: string,
+  blocked: ReadonlySet<number>,
+): Promise<number[]> {
+  const released: number[] = [];
+  for (const record of await store.list(repo)) {
+    if (record.blockedReason === undefined) continue;
+    if (blocked.has(record.issue)) continue;
+    const key: IssueKey = { repo, issue: record.issue };
+    await resetCounts(store, key);
+    await store.update(key, { blockedReason: undefined });
+    released.push(record.issue);
+  }
+  return released;
 }
 
 /** 記録を書き直すときの、今の記録の項目 */
@@ -344,6 +382,7 @@ async function followRespec(
     await store.setBlockedThread(key, { ...inputOf(record), copied: true });
   }
 
+  await resetCounts(store, key);
   await board.moveIssue(record.issue, columns.ready);
   await chat.post(
     threadId,

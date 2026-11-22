@@ -19,7 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # 受け入れテストが main との分かれ目（git merge-base）を求めるので、履歴と main ブランチも取ってくる
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:

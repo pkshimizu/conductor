@@ -321,6 +321,55 @@ describe("tick の着手と完了", () => {
   });
 });
 
+describe("tick の Blocked の列から出た Issue（窓口が無いとき）", () => {
+  const key = (n: number) => ({ repo: REPO, issue: n });
+
+  it("Blocked にした Issue を人が Blocked の列から動かしたら、差し戻しと反論の回数を 0 に戻し、止まった理由を消す", async () => {
+    const t = setup({ Ready: [7] });
+    await t.store.update(key(7), {
+      rejections: 3,
+      objections: 2,
+      checkpoint: { stage: "implementing" },
+      blockedReason: "差し戻しが上限を超えました",
+    });
+    await tick(t.deps, newLoopState());
+    const record = await t.store.get(key(7));
+    expect(record?.rejections).toBe(0);
+    expect(record?.objections).toBe(0);
+    expect(record?.blockedReason).toBeUndefined();
+    expect(record?.blockedAt).toBeUndefined();
+    // 段階はそのまま
+    expect(record?.checkpoint?.stage).toBe("implementing");
+    expect(t.logs.some((l) => l.includes("#7: Blocked の列から出ていた"))).toBe(
+      true,
+    );
+  });
+
+  it("まだ Blocked の列にある Issue の回数と止まった理由はそのまま", async () => {
+    const t = setup({ Blocked: [7] });
+    await t.store.update(key(7), {
+      rejections: 3,
+      objections: 1,
+      blockedReason: "差し戻しが上限を超えました",
+    });
+    await tick(t.deps, newLoopState());
+    const record = await t.store.get(key(7));
+    expect(record?.rejections).toBe(3);
+    expect(record?.objections).toBe(1);
+    expect(record?.blockedReason).toBe("差し戻しが上限を超えました");
+  });
+
+  it("Blocked にしていない Issue の回数は戻さない", async () => {
+    const t = setup({ Implementing: [7] });
+    await t.store.update(key(7), {
+      rejections: 2,
+      checkpoint: { stage: "implementing" },
+    });
+    await tick(t.deps, newLoopState());
+    expect((await t.store.get(key(7)))?.rejections).toBe(2);
+  });
+});
+
 describe("tick", () => {
   it("作業中の Issue が無ければ、Ready の番号が小さいものを1件拾って進める", async () => {
     const t = setup({ Ready: [5, 3] });

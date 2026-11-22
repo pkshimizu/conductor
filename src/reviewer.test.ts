@@ -450,6 +450,54 @@ describe("runReviewer", () => {
     expect(s.runs[0]!.prompt).toContain("- shots/issue-2/AC1.png");
   });
 
+  it("許可リストにない操作を拒否されたら、差し戻しに数えずに許可を待つ。記録がある間は起動しない", async () => {
+    const s = setup([
+      { verdict: "reject", summary: "確かめられなかった", findings: [] },
+    ]);
+    const run = s.deps.run;
+    s.deps.run = async (r) => ({
+      ...(await run(r)),
+      denials: [
+        { tool: "Bash", input: { command: "npm run shot" } },
+        // deny に当てはまる操作は許可を聞かない
+        { tool: "Write", input: { file_path: "/repo/a.ts" } },
+      ],
+    });
+    await s.init();
+    const r = await runReviewer(s.deps, ISSUE);
+    expect(r).toEqual({
+      status: "waiting_permission",
+      rules: ["Bash(npm run shot)"],
+    });
+    expect(await s.store.get(KEY)).toMatchObject({ rejections: 0 });
+    expect(await s.store.getPermissionRequest(KEY)).toMatchObject({
+      role: "reviewer",
+      rules: ["Bash(npm run shot)"],
+      denied: ["npm run shot"],
+      title: "カード一覧",
+    });
+    expect(s.moves.some(([, c]) => c === "Blocked")).toBe(false);
+
+    const again = await runReviewer(s.deps, ISSUE);
+    expect(again.status).toBe("waiting_permission");
+    expect(s.runs).toHaveLength(1);
+  });
+
+  it("deny に当てはまる拒否だけなら、いまと同じく差し戻しにする", async () => {
+    const s = setup([
+      { verdict: "reject", summary: "直してください", findings: [] },
+    ]);
+    const run = s.deps.run;
+    s.deps.run = async (r) => ({
+      ...(await run(r)),
+      denials: [{ tool: "Edit", input: { file_path: "/repo/a.ts" } }],
+    });
+    await s.init();
+    const r = await runReviewer(s.deps, ISSUE);
+    expect(r).toMatchObject({ status: "rejected", rejections: 1 });
+    expect(await s.store.getPermissionRequest(KEY)).toBeUndefined();
+  });
+
   it("レビュー役が失敗しても変更を捨てる", async () => {
     const s = setup([
       () => {

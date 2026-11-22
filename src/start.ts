@@ -11,6 +11,7 @@ import {
 } from "./admin-server.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import { mergeApproved } from "./approval.js";
+import { loadBaseSettings } from "./base-settings.js";
 import { type ClaudeDeps, realDeps, runRole, withLanguage } from "./claude.js";
 import type { Chat } from "./chat.js";
 import {
@@ -32,6 +33,7 @@ import { Git } from "./git.js";
 import { type GitHub, githubFromConfig } from "./github.js";
 import { runImplementer } from "./implementer.js";
 import { pickUp } from "./intake.js";
+import { followPermissionRequests } from "./permission-request.js";
 import { cachedStatusOf, checkProgress } from "./progress.js";
 import type { RespecDeps } from "./respec.js";
 import type { LoopActivity, LoopDeps, StepContext } from "./loop.js";
@@ -212,6 +214,22 @@ export async function buildLoopDeps(
     ...(decompose === undefined ? {} : { decompose }),
     ...(progress === undefined ? {} : { progress }),
     log,
+    // 許可リストにない操作を拒否された Issue の許可の確認。規則は設定の保存と同じく PR を作ってマージする
+    permissions: () =>
+      followPermissionRequests({
+        config,
+        store,
+        board: github,
+        ...(chat === undefined ? {} : { chat }),
+        saveSettings: async (form) =>
+          saveSettings(
+            { repoDir, github, base: await github.baseBranch() },
+            form,
+          ),
+        latestSettings: async () =>
+          loadBaseSettings({ repoDir, base: await github.baseBranch() }),
+        log,
+      }),
     pickUp: (issue, cache) =>
       pickUp(
         { config, store, board: github, log },
